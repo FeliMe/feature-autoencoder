@@ -1,0 +1,17 @@
+# Hidden files
+.DS_Store
+
+# Single directories
+/.kaggle/
+/fae/logs/
+/fae/lpips/weights/
+/fae.egg-info/
+
+# Recursive directories
+.ipynb_checkpoints/
+__pycache__/
+.pytest_cache/
+.vscode/
+
+# Tester file
+/fae/tester.py
