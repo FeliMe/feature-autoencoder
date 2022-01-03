@@ -1,4 +1,4 @@
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 from typing import Callable, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
@@ -6,43 +6,6 @@ import nibabel as nib
 import numpy as np
 from skimage.exposure import equalize_hist
 from skimage.transform import resize
-
-
-def load_files_to_ram(files: Sequence, load_fn: Callable,
-                      num_processes: int = 48):
-    pool = Pool(num_processes)
-    results = []
-
-    results = pool.map(load_fn, files)
-
-    pool.close()
-    pool.join()
-
-    return results
-
-
-def show(imgs: List[np.ndarray], seg: List[np.ndarray] = None,
-         path: str = None) -> None:
-
-    if not isinstance(imgs, list):
-        imgs = [imgs]
-    n = len(imgs)
-    fig = plt.figure()
-
-    for i in range(n):
-        fig.add_subplot(1, n, i + 1)
-        plt.imshow(imgs[i], cmap="gray", vmin=0., vmax=1.)
-
-        if path is not None:
-            plt.axis('off')
-
-        if seg is not None:
-            plt.imshow(seg[i], cmap="jet", alpha=0.3)
-
-    if path is None:
-        plt.show()
-    else:
-        plt.savefig(path, bbox_inches='tight', pad_inches=0)
 
 
 def load_nii(path: str, size: int = None, primary_axis: int = 0,
@@ -81,19 +44,54 @@ def load_nii(path: str, size: int = None, primary_axis: int = 0,
     return volume, affine
 
 
-def load_nii_nn(path: str, size: int = None,
+def load_nii_nn(path: str, size: int = 224,
                 slice_range: Tuple[int, int] = None,
+                normalize: bool = False,
                 equalize_histogram: bool = False,
                 dtype: str = "float32"):
-    vol = load_nii(path, size, primary_axis=2, dtype=dtype)[0]
+    """
+    Load a file for training. Slices should be first dimension, volumes are in
+    MNI space and center cropped to the shorter side, then resized to size
+    """
+    vol = load_nii(path, primary_axis=2, dtype=dtype)[0]
 
     if slice_range is not None:
         vol = vol[slice_range[0]:slice_range[1]]
+
+    vol = rectangularize(vol)
+
+    if size is not None:
+        vol = resize(vol, [vol.shape[0], size, size])
+
+    if normalize:
+        vol = normalize_percentile(vol, 98)
 
     if equalize_histogram:
         vol = histogram_equalization(vol)
 
     return vol
+
+
+def load_segmentation(path: str, size: int = 224,
+                      slice_range: Tuple[int, int] = None,
+                      threshold: float = 0.4):
+    """Load a segmentation file"""
+    vol = load_nii_nn(path, size=size, slice_range=slice_range,
+                      normalize=False, equalize_histogram=False)
+    return np.where(vol > threshold, 1, 0)
+
+
+def load_files_to_ram(files: Sequence, load_fn: Callable = load_nii_nn,
+                      num_processes: int = cpu_count()) -> List[np.ndarray]:
+    pool = Pool(num_processes)
+    results = []
+
+    results = pool.map(load_fn, files)
+
+    pool.close()
+    pool.join()
+
+    return results
 
 
 def histogram_equalization(img):
@@ -105,6 +103,85 @@ def histogram_equalization(img):
     img *= mask
 
     return img
+
+
+def normalize_percentile(img: np.ndarray, percentile: float = 98) -> np.ndarray:
+    """Normalize an image to a percentile.
+    Args:
+        img (np.ndarray): Image to normalize
+        percentile (float): Percentile to normalize to
+    Returns:
+        img (np.ndarray): Normalized image
+    """
+    # Get upper and lower bounds
+    maxi = np.percentile(img, percentile)
+    mini = np.min(img)
+    # Normalize
+    img = (img.astype(np.float32) - mini) / (maxi - mini)
+
+    return img
+
+
+def rectangularize(img: np.ndarray) -> np.ndarray:
+    """
+    Center crop the image to the shorter side
+
+    Args:
+        img (np.ndarray): Image to crop, shape [slices, w, h]
+    Returns:
+        img (np.ndarray): Cropped image
+    """
+    # Get image shape
+    w, h = img.shape[1:]
+
+    if w < h:
+        # Center crop height to width
+        img = img[:, :, (h - w) // 2:(h + w) // 2]
+    elif h < w:
+        # Center crop width to height
+        img = img[:, (w - h) // 2:(w + h) // 2, :]
+    else:
+        # No cropping
+        pass
+
+    return img
+
+
+def train_val_split(files: Sequence, val_size: float):
+    """Split a list of files into training and validation sets"""
+    # Shuffle
+    np.random.shuffle(files)
+
+    # Split
+    val_size = int(len(files) * val_size)
+    train_files = files[val_size:]
+    val_files = files[:val_size]
+
+    return train_files, val_files
+
+
+def show(imgs: List[np.ndarray], seg: List[np.ndarray] = None,
+         path: str = None) -> None:
+
+    if not isinstance(imgs, list):
+        imgs = [imgs]
+    n = len(imgs)
+    fig = plt.figure()
+
+    for i in range(n):
+        fig.add_subplot(1, n, i + 1)
+        plt.imshow(imgs[i], cmap="gray")
+
+        if path is not None:
+            plt.axis('off')
+
+        if seg is not None:
+            plt.imshow(seg[i], cmap="jet", alpha=0.3)
+
+    if path is None:
+        plt.show()
+    else:
+        plt.savefig(path, bbox_inches='tight', pad_inches=0)
 
 
 def volume_viewer(volume, initial_position=None, slices_first=True):
@@ -185,7 +262,7 @@ def volume_viewer(volume, initial_position=None, slices_first=True):
         d = shape[0]
         ax.index = d - index
         aspect = shape[2] / shape[1]
-        ax.imshow(ax.volume[ax.index], aspect=aspect, vmin=0., vmax=1.)
+        ax.imshow(ax.volume[ax.index], aspect=aspect)
         ax.set_title(title)
         ax.text(5, 15, f"Slice: {d - ax.index}", color="white")
 
@@ -213,3 +290,10 @@ def volume_viewer(volume, initial_position=None, slices_first=True):
           "\ncoronal with 'u', 'i'"
           "\nsaggital with 'h', 'l'")
     plt.show()
+
+
+if __name__ == '__main__':
+    file = "/home/felix/datasets/CamCAN/normal/sub-CC110033/sub-CC110033_T1w_registered_stripped.nii.gz"
+    vol = load_nii_nn(file, size=224)
+    print(vol.shape)
+    volume_viewer(vol)

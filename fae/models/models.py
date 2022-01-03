@@ -3,14 +3,13 @@ from typing import List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchsummary import summary
 
 from fae.models.feature_extractor import Extractor
 from fae.utils.pytorch_ssim import SSIMLoss
 
 
 class BaseModel(nn.Module):
-    def __init__(self,):
+    def __init__(self):
         super().__init__()
 
     def forward(self, x):
@@ -26,7 +25,7 @@ class BaseModel(nn.Module):
         raise NotImplementedError
 
 
-def vanilla_encoder(in_channels: int, hidden_dims: List[int], use_batchnorm: bool = True):
+def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int], use_batchnorm: bool = True):
     """
     Vanilla feature encoder.
     Args:
@@ -56,7 +55,7 @@ def vanilla_encoder(in_channels: int, hidden_dims: List[int], use_batchnorm: boo
     return enc
 
 
-def vanilla_decoder(out_channels: int, hidden_dims: List[int], use_batchnorm: bool = True):
+def vanilla_feature_decoder(out_channels: int, hidden_dims: List[int], use_batchnorm: bool = True):
     """
     Vanilla feature decoder.
     Args:
@@ -94,35 +93,36 @@ def vanilla_decoder(out_channels: int, hidden_dims: List[int], use_batchnorm: bo
 
 
 class FeatureAutoencoder(BaseModel):
-    def __init__(self, inp_size, c_latent, keep_feature_prop, **kwargs):
+    def __init__(self, config):
         super().__init__()
-        self.extractor = Extractor(inp_size=inp_size,
-                                   keep_feature_prop=keep_feature_prop)
+        self.extractor = Extractor(inp_size=config.image_size,
+                                   keep_feature_prop=config.keep_feature_prop)
         c_in = self.extractor.c_out
         hidden_dims = [
-            (c_in + 2 * c_latent) // 2,
-            4 * c_latent,
-            2 * c_latent,
-            c_latent
+            (c_in + 2 * config.c_latent) // 2,
+            4 * config.c_latent,
+            2 * config.c_latent,
+            config.c_latent
         ]
-        self.enc = vanilla_encoder(self.extractor.c_out, hidden_dims)
-        self.dec = vanilla_decoder(self.extractor.c_out, hidden_dims)
+        self.enc = vanilla_feature_encoder(self.extractor.c_out, hidden_dims)
+        self.dec = vanilla_feature_decoder(self.extractor.c_out, hidden_dims)
 
     def forward(self, x):
         feats = self.extractor(x)
-        print(f"Features shape: {feats.shape}")
         z = self.enc(feats)
-        print(f"Latent shape: {z.shape}")
         y = self.dec(z)
-        print(f"Reconstruction shape: {y.shape}")
         return feats, y
 
     def loss(self, x):
-        return self.predict_anomaly(x).mean()
+        return self.predict_anomaly_(x).mean()
 
-    def predict_anomaly(self, x):
+    def predict_anomaly_(self, x):
         feats, y = self(x)
         return F.l1_loss(y, feats, reduction='none').sum(1, keepdim=True)
+
+    def predict_anomaly(self, x):
+        return F.interpolate(self.predict_anomaly_(x), x.shape[-2:],
+                             mode='bilinear', align_corners=True)
 
     def load(self, path):
         self.load_state_dict(torch.load(path))
@@ -132,8 +132,13 @@ class FeatureAutoencoder(BaseModel):
 
 
 if __name__ == '__main__':
-    device = 'cpu'
-    x = torch.randn(1, 1, 256, 256)
-    fae = FeatureAutoencoder(inp_size=256, c_latent=128, keep_feature_prop=1.0).to(device)
+    from argparse import Namespace
+    config = Namespace()
+    config.image_size = 224
+    config.c_latent = 128
+    config.keep_feature_prop = 1.0
+
+    x = torch.randn(1, 1, *[config.image_size] * 2)
+    fae = FeatureAutoencoder(config)
     anomaly_map = fae.predict_anomaly(x)
     import IPython; IPython.embed(); exit(1)
