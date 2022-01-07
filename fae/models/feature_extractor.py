@@ -43,6 +43,7 @@ class ResNetFeatureExtractor(nn.Module):
     def forward(self, inp):
         if inp.shape[1] == 1:
             inp = inp.repeat(1, 3, 1, 1)
+
         out = {}
         for name, module in self._modules.items():
             inp = module(inp)
@@ -68,7 +69,6 @@ class Extractor(nn.Module):
         upsample='bilinear',
         inp_size=256,
         keep_feature_prop=1.0,
-        **kwargs
     ):
         super().__init__()
 
@@ -79,22 +79,23 @@ class Extractor(nn.Module):
         self.align_corners = True if upsample == "bilinear" else None
 
         # Find out how many channels we got from the backbone
-        c_out = self.get_out_channels()
+        c_feats = self.get_out_channels()
 
         # Create mask to drop random features_channels
-        self.register_buffer('feature_mask', torch.Tensor(c_out).uniform_() < keep_feature_prop)
-        self.c_out = self.feature_mask.sum().item()
+        self.register_buffer('feature_mask', torch.Tensor(c_feats).uniform_() < keep_feature_prop)
+        self.c_feats = self.feature_mask.sum().item()
 
     def get_out_channels(self):
         device = next(self.backbone.parameters()).device
         inp = torch.randn((2, 1, self.inp_size, self.inp_size), device=device)
         return sum([feat_map.shape[1] for feat_map in self.backbone(inp).values()])
 
-    def forward(self, inp):
-        if type(inp) is dict:
-            feat_maps = inp
-        else:
-            feat_maps = self.backbone(inp)
+    def forward(self, inp: torch.Tensor):
+        # Center input
+        inp = (inp - 0.5) * 2
+
+        # Extract feature maps
+        feat_maps = self.backbone(inp)
 
         features = []
         for feat_map in feat_maps.values():

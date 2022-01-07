@@ -177,7 +177,6 @@ class ValidationDataset(Dataset):
 
     def __getitem__(self, idx):
         img, seg = self.create_anomaly(self.imgs[idx])
-        show([self.imgs[idx], img, seg])
         return [img, seg]
 
 
@@ -218,10 +217,15 @@ def get_dataloaders(config):
     train_files, val_files = train_val_split(train_files, config.val_split)
     test_files, test_seg_files = get_files(config.test_dataset, config.sequence)
 
-    train_imgs = np.concatenate(load_images(train_files, config))
-    val_imgs = np.concatenate(load_images(val_files, config))
-    test_imgs = np.concatenate(load_images(test_files, config))
-    test_segs = np.concatenate(load_segmentations(test_seg_files, config))
+    train_imgs = np.concatenate(load_images(train_files, config))[:, None]
+    val_imgs = np.concatenate(load_images(val_files, config))[:, None]
+    test_imgs = np.concatenate(load_images(test_files, config))[:, None]
+    test_segs = np.concatenate(load_segmentations(test_seg_files, config))[:, None]
+
+    # Shuffle test data
+    perm = np.random.permutation(len(test_imgs))
+    test_imgs = test_imgs[perm]
+    test_segs = test_segs[perm]
 
     train_loader = DataLoader(TrainDataset(train_imgs),
                               batch_size=config.batch_size,
@@ -235,6 +239,9 @@ def get_dataloaders(config):
                              batch_size=config.batch_size,
                              shuffle=False,
                              num_workers=config.num_workers)
+    print(f"Len train_loader: {len(train_loader)}")
+    print(f"Len val_loader: {len(val_loader)}")
+    print(f"Len test_loader: {len(test_loader)}")
 
     return train_loader, val_loader, test_loader
 
@@ -247,6 +254,7 @@ if __name__ == "__main__":
     config.image_size = 224
     config.normalize = True
     config.equalize_histogram = False
+    config.batch_size = 32
 
     # Test finding files
     camcan_files = get_camcan_files(sequence='t1')
@@ -265,27 +273,27 @@ if __name__ == "__main__":
     print(len(wmh_files), len(wmh_seg_files))
 
     # Test training dataset
-    imgs = np.concatenate(load_images(camcan_files[:10], config))
-    print(imgs.shape)
+    imgs = np.concatenate(load_images(camcan_files[:10], config))[:, None]
     train_ds = TrainDataset(imgs[40:])
-    print(len(train_ds))
-    x = next(iter(train_ds))
-    show(x)
+    train_loader = DataLoader(train_ds, batch_size=config.batch_size)
+    x = next(iter(train_loader))
+    print(x.shape)
+    show(x[0, 0])
 
     # Test validation dataset
-    imgs = np.concatenate(load_images(camcan_files[:10], config))
+    imgs = np.concatenate(load_images(camcan_files[:10], config))[:, None]
     print(imgs.shape)
     val_ds = ValidationDataset(imgs[40:], (5, 50))
-    print(len(val_ds))
-    x, y = next(iter(val_ds))
-    show([x, y])
+    val_loader = DataLoader(val_ds, batch_size=config.batch_size)
+    x, y = next(iter(val_loader))
+    print(x.shape, y.shape)
+    show([x[0, 0], y[0, 0]])
 
     # Test test dataset
-    imgs = np.concatenate(load_images(brats_files[:10], config))
-    segs = np.concatenate(load_segmentations(brats_seg_files[:10], config))
-    print(imgs.shape, segs.shape)
+    imgs = np.concatenate(load_images(brats_files[:10], config))[:, None]
+    segs = np.concatenate(load_segmentations(brats_seg_files[:10], config))[:, None]
     test_ds = TestDataset(imgs[40:], segs[40:])
-    x, y = next(iter(test_ds))
-    show([x, y])
-
-    import IPython; IPython.embed(); exit(1)
+    test_loader = DataLoader(test_ds, batch_size=config.batch_size)
+    x, y = next(iter(test_loader))
+    print(x.shape, y.shape)
+    show([x[0, 0], y[0, 0]])

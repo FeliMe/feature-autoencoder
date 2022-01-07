@@ -44,7 +44,7 @@ def load_nii(path: str, size: int = None, primary_axis: int = 0,
     return volume, affine
 
 
-def load_nii_nn(path: str, size: int = 224,
+def load_nii_nn(path: str, size: int,
                 slice_range: Tuple[int, int] = None,
                 normalize: bool = False,
                 equalize_histogram: bool = False,
@@ -72,7 +72,7 @@ def load_nii_nn(path: str, size: int = 224,
     return vol
 
 
-def load_segmentation(path: str, size: int = 224,
+def load_segmentation(path: str, size: int,
                       slice_range: Tuple[int, int] = None,
                       threshold: float = 0.4):
     """Load a segmentation file"""
@@ -83,13 +83,8 @@ def load_segmentation(path: str, size: int = 224,
 
 def load_files_to_ram(files: Sequence, load_fn: Callable = load_nii_nn,
                       num_processes: int = cpu_count()) -> List[np.ndarray]:
-    pool = Pool(num_processes)
-    results = []
-
-    results = pool.map(load_fn, files)
-
-    pool.close()
-    pool.join()
+    with Pool(num_processes) as pool:
+        results = pool.map(load_fn, files)
 
     return results
 

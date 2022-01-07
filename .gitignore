@@ -2,9 +2,6 @@
 .DS_Store
 
 # Single directories
-/.kaggle/
-/fae/logs/
-/fae/lpips/weights/
 /fae.egg-info/
 
 # Recursive directories
@@ -12,6 +9,9 @@
 __pycache__/
 .pytest_cache/
 .vscode/
+
+# w&b files and directories
+/fae/wandb/
 
 # Tester file
 /fae/tester.py

@@ -1,5 +1,6 @@
 import random
 import numpy as np
+import torch
 from skimage.draw import disk
 
 from typing import Callable, Tuple
@@ -7,12 +8,12 @@ from typing import Callable, Tuple
 
 def sample_position(img: np.ndarray) -> Tuple[int, int]:
     """Sample a random position in the brain
-    :param: img: The image to sample the position on
+    :param: img: The image to sample the position on, shape [slices, h, w]
     :return: A tuple of the x,y position
     """
     obj_inds = np.where(img > 0)
     location_idx = random.randint(0, len(obj_inds[0]) - 1)
-    position = (obj_inds[0][location_idx], obj_inds[1][location_idx])
+    position = (obj_inds[-2][location_idx], obj_inds[-1][location_idx])
     return position
 
 
@@ -29,19 +30,18 @@ def disk_anomaly(img: np.ndarray, position: Tuple[int, int], radius: int,
         disk_img (np.ndarray): img with ball drawn on it
         label (np.ndarray): target segmentation mask
     """
-    assert img.ndim == 2, f"Invalid shape {img.shape}. Use a grayscale image"
     # Create disk
     rr, cc = disk(position, radius)
-    rr = rr.clip(0, img.shape[0] - 1)
-    cc = cc.clip(0, img.shape[1] - 1)
+    rr = rr.clip(0, img.shape[-2] - 1)
+    cc = cc.clip(0, img.shape[-1] - 1)
 
     # Draw disk on image
     disk_img = img.copy()
-    disk_img[rr, cc] = intensity
+    disk_img[..., rr, cc] = intensity
 
     # Create label
     label = np.zeros(img.shape, dtype=np.uint8)
-    label[rr, cc] = 1
+    label[..., rr, cc] = 1
 
     # Remove anomaly at background pixels
     mask = img > 0
@@ -64,10 +64,10 @@ def source_deformation_anomaly(img: np.ndarray, position: Tuple[int, int],
     """
     # Create label mask
     rr, cc = disk(position, radius)
-    rr = rr.clip(0, img.shape[0] - 1)
-    cc = cc.clip(0, img.shape[1] - 1)
+    rr = rr.clip(0, img.shape[-2] - 1)
+    cc = cc.clip(0, img.shape[-1] - 1)
     label = np.zeros(img.shape, dtype=np.uint8)
-    label[rr, cc] = 1
+    label[..., rr, cc] = 1
 
     # Remove anomaly at background pixels
     mask = img > 0
@@ -114,10 +114,10 @@ def sink_deformation_anomaly(img: np.ndarray, position: Tuple[int, int],
     """
     # Create label mask
     rr, cc = disk(position, radius)
-    rr = rr.clip(0, img.shape[0] - 1)
-    cc = cc.clip(0, img.shape[1] - 1)
+    rr = rr.clip(0, img.shape[-2] - 1)
+    cc = cc.clip(0, img.shape[-1] - 1)
     label = np.zeros(img.shape, dtype=np.uint8)
-    label[rr, cc] = 1
+    label[..., rr, cc] = 1
 
     # Remove anomaly at background pixels
     mask = img > 0
@@ -138,7 +138,7 @@ def sink_deformation_anomaly(img: np.ndarray, position: Tuple[int, int],
 
         # Sink pixel shift
         s = np.square(np.linalg.norm(I - C, ord=2) / radius)
-        V = np.round(I + (1 - s) * (I - C)).astype(np.int)
+        V = np.round(I + (1 - s) * (I - C)).astype(np.int32)
         x_, y_ = V
 
         # Assure that z_, y_ and x_ are valid indices
@@ -164,10 +164,10 @@ def pixel_shuffle_anomaly(img: np.ndarray, position: Tuple[int, int],
     """
     # Create label mask
     rr, cc = disk(position, radius)
-    rr = rr.clip(0, img.shape[0] - 1)
-    cc = cc.clip(0, img.shape[1] - 1)
+    rr = rr.clip(0, img.shape[-2] - 1)
+    cc = cc.clip(0, img.shape[-1] - 1)
     label = np.zeros(img.shape, dtype=np.uint8)
-    label[rr, cc] = 1
+    label[..., rr, cc] = 1
 
     # Remove anomaly at background pixels
     mask = img > 0
@@ -177,13 +177,13 @@ def pixel_shuffle_anomaly(img: np.ndarray, position: Tuple[int, int],
     img_deformed = img.copy()
 
     # Create permutation of indices in label mask
-    inds = np.where(label > 0)
+    inds = np.where(label > 0)[-2:]
     perm = np.random.permutation(len(inds[0]))
     inds_shuffled = [axis[perm] for axis in inds]
 
     # Apply permutation
     for x, y, x_, y_ in zip(*inds, *inds_shuffled):
-        img_deformed[x, y] = img[x_, y_]
+        img_deformed[..., x, y] = img[..., x_, y_]
 
     return img_deformed, label
 
@@ -202,3 +202,15 @@ def random_anomaly(img: np.ndarray, radius_range: Tuple[int, int],
     position = sample_position(img)
     radius = np.random.randint(radius_range[0], radius_range[1] + 1)
     return anomaly_fn(img, position, radius)
+
+
+if __name__ == '__main__':
+    from fae.data.data_utils import load_nii_nn
+    file = "/home/felix/datasets/CamCAN/normal/sub-CC110033/sub-CC110033_T1w_registered_stripped.nii.gz"
+    vol = load_nii_nn(file, size=224, slice_range=(55, 135))
+    vol = vol[:, None]
+    print(vol.shape)
+    img, seg = random_anomaly(vol[40], (30, 30), pixel_shuffle_anomaly)
+    from fae.data.data_utils import show
+    print(img.shape, seg.shape)
+    show([img[0], seg[0]])

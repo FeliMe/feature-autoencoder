@@ -1,48 +1,30 @@
 from argparse import ArgumentParser
-from time import perf_counter
+from collections import defaultdict
+from time import time
 
+import numpy as np
+import torch
+from torchsummary import summary
 import wandb
 
+from fae.configs.base_config import base_parser
 from fae.data import datasets
-from fae.data.data_utils import train_val_split
 from fae.models import models
 from fae.utils.utils import seed_everything
+from fae.utils.evaluation import compute_average_precision, compute_auroc
 
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
-parser = ArgumentParser()
 
-# General script settings
-parser.add_argument('--seed', type=int, default=42, help='Random seed')
-parser.add_argument('--debug', action='store_true', help='Debug mode')
-parser.add_argument('--resume', action='store_true', help='Debug mode')  # TODO: implement
-
-# Model settings
-parser.add_argument('--model', type=str, default='FeatureAutoencoder', help='Model name')
-parser.add_argument('--c_latent', type=int, default=128, help='Latent channels')
-parser.add_argument('--keep_feature_prop', type=float, default=1.0, help='Proportion of ResNet features to keep')
-
-# Data settings
-parser.add_argument('--train_dataset', type=str, default='camcan', help='Training dataset name')
-parser.add_argument('--test_dataset', type=str, default='mslub', help='Test dataset name')
-parser.add_argument('--val_split', type=float, default=0.1, help='Validation fraction')
-parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
-parser.add_argument('--num_workers', type=int, default=4, help='Number of workers')
-parser.add_argument('--image_size', type=int, default=224, help='Image size')
-parser.add_argument('--slice_range', type=int, nargs='+', default=(55, 135), help='Slice range')
-parser.add_argument('--normalize', action='store_true', help='Normalize images between 0 and 1')
-parser.add_argument('--equalize_histogram', action='store_true', help='Equalize histogram')
-parser.add_argument('--anomaly_size', type=int, nargs='+', default=(55, 135), help='Anomaly size')
-
-# Hyperparameters
-parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-parser.add_argument('--max_steps', type=int, default=10000, help='Number of training steps')
-parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
-
-# Logging settings
-parser.add_argument('--val_frequency', type=int, default=100, help='Validation frequency')
+parser = ArgumentParser(
+    description="Arguments for training the Feature Autoencoder",
+    parents=[base_parser]
+)
 
 args = parser.parse_args()
+
+# Select training device
+args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
            mode="disabled" if args.debug else "online")
@@ -65,21 +47,148 @@ def get_model(config):
     return model_cls(config)
 
 
-model = get_model(config)
+print("Initializing model...")
+model = get_model(config).to(config.device)
+# Track model with w&b
+wandb.watch(model)
+# Init optimizer
+optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
+                             weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
+# Print model
+print(model.enc)
+print(model.dec)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
 
 
-t_load_data_start = perf_counter()
+print("Loading data...")
+t_load_data_start = time()
 train_loader, val_loader, test_loader = datasets.get_dataloaders(config)
 print(f'Loaded {config.train_dataset} and {config.test_dataset} in '
-      f'{perf_counter() - t_load_data_start:.2f}s')
-import IPython; IPython.embed(); exit(1)
+      f'{time() - t_load_data_start:.2f}s')
 
 
-""""""""""""""""""""""""""""""""""" Train """""""""""""""""""""""""""""""""""
+""""""""""""""""""""""""""""""""""" Training """""""""""""""""""""""""""""""""""
 
 
-def train(model, trainloader, valloader, testloader, config):
-    pass
+def train_step(model, optimizer, x, device):
+    model.train()
+    optimizer.zero_grad()
+    x = x.to(device)
+    loss_dict = model.loss(x)
+    loss = loss_dict['loss']
+    loss.backward()
+    optimizer.step()
+    return loss_dict
+
+
+def val_step(model, x, device):
+    model.eval()
+    x = x.to(device)
+    with torch.no_grad():
+        loss_dict = model.loss(x)
+        anomaly_map, anomaly_score = model.predict_anomaly(x)
+    return loss_dict, anomaly_map.cpu(), anomaly_score.cpu()
+
+
+def validate(model, val_loader, device, i_iter):
+    val_losses = defaultdict(list)
+    pixel_aps = []
+    labels = []
+    anomaly_scores = []
+    i_val_step = 0
+
+    for x, y in val_loader:
+        # x, y, anomaly_map: [b, 1, h, w]
+        # Compute loss, anomaly map and anomaly score
+        loss_dict, anomaly_map, anomaly_score = val_step(model, x, device)
+
+        # Compute metrics
+        label = torch.where(y.sum(dim=(1, 2, 3)) > 16, 1, 0)  # TODO: Turn to 0
+        pixel_ap = compute_average_precision(anomaly_map, y)
+
+        for k, v in loss_dict.items():
+            val_losses[k].append(v.item())
+        pixel_aps.append(pixel_ap)
+        labels.append(label)
+        anomaly_scores.append(anomaly_score)
+
+        i_val_step += 1
+        if i_val_step >= config.val_steps:
+            break
+
+    # Compute sample-wise average precision and AUROC over all validation steps
+    labels = torch.cat(labels)
+    anomaly_scores = torch.cat(anomaly_scores)
+    sample_ap = compute_average_precision(anomaly_scores, labels)
+    sample_auroc = compute_auroc(anomaly_scores, labels)
+
+    # Print validation results
+    print("\nValidation results:")
+    log_msg = " - ".join([f'val {k}: {np.mean(v):.4f}' for k, v in val_losses.items()])
+    log_msg += f"\npixel-wise average precision: {np.mean(pixel_aps):.4f}\n"
+    log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
+    log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
+    log_msg += f"Average positive label: {labels.float().mean():.4f}\n"
+    print(log_msg)
+
+    # Log to w&b
+    wandb.log({
+        f'val/{k}': np.mean(v) for k, v in val_losses.items()
+    }, step=i_iter)
+    wandb.log({
+        'val/pixel-ap': np.mean(pixel_aps),
+        'val/sample-ap': np.mean(sample_ap),
+        'val/sample-auroc': np.mean(sample_auroc),
+        'val/input images': wandb.Image(x.cpu()[:config.num_images_log]),
+        'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
+        'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log])
+    }, step=i_iter)
+
+
+def train(model, optimizer, train_loader, val_loader, config):
+    print('Starting training...')
+    i_iter = 0
+    i_epoch = 0
+
+    train_losses = defaultdict(list)
+
+    t_start = time()
+    while True:
+        for x in train_loader:
+            i_iter += 1
+            loss_dict = train_step(model, optimizer, x, config.device)
+
+            # Add to losses
+            for k, v in loss_dict.items():
+                train_losses[k].append(v.item())
+
+            if i_iter % config.log_frequency == 0:
+                # Print training loss
+                log_msg = " - ".join([f'{k}: {np.mean(v):.4f}' for k, v in train_losses.items()])
+                log_msg = f"Iteration {i_iter} - " + log_msg
+                log_msg += f" - time: {time() - t_start:.2f}s"
+                print(log_msg)
+
+                # Log to w&b
+                wandb.log({
+                    f'train/{k}': np.mean(v) for k, v in train_losses.items()
+                }, step=i_iter)
+
+                # Reset
+                train_losses = defaultdict(list)
+
+            if i_iter % config.val_frequency == 0:
+                validate(model, val_loader, config.device, i_iter)
+
+            if i_iter >= config.max_steps:
+                print(f'Reached {config.max_steps} iterations. Finished training.')
+                return
+
+        i_epoch += 1
+        print(f'Finished epoch {i_epoch}, ({i_iter} iterations)')
+
+
+if __name__ == '__main__':
+    train(model, optimizer, train_loader, test_loader, config)
