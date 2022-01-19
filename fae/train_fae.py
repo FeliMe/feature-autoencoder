@@ -4,7 +4,6 @@ from time import time
 
 import numpy as np
 import torch
-from torchsummary import summary
 import wandb
 
 from fae.configs.base_config import base_parser
@@ -55,8 +54,8 @@ wandb.watch(model)
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                              weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
 # Print model
-print(model.enc)
-print(model.dec)
+# print(model.enc)
+# print(model.dec)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -105,8 +104,8 @@ def validate(model, val_loader, device, i_iter):
         loss_dict, anomaly_map, anomaly_score = val_step(model, x, device)
 
         # Compute metrics
-        label = torch.where(y.sum(dim=(1, 2, 3)) > 16, 1, 0)  # TODO: Turn to 0
         pixel_ap = compute_average_precision(anomaly_map, y)
+        label = torch.where(y.sum(dim=(1, 2, 3)) > 16, 1, 0)  # TODO: Turn to 0
 
         for k, v in loss_dict.items():
             val_losses[k].append(v.item())

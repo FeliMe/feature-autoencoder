@@ -33,7 +33,8 @@ base_parser.add_argument('--max_steps', type=int, default=10000, help='Number of
 base_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
 
 # Model settings
-base_parser.add_argument('--model', type=str, default='FeatureAutoencoder', help='Model name')
+base_parser.add_argument('--model', type=str, default='FeatureReconstructor', help='Model name')
 base_parser.add_argument('--hidden_dims', type=int, nargs='+', default=[400, 450, 500, 600], help='Autoencoder hidden dimensions')
 base_parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
 base_parser.add_argument('--keep_feature_prop', type=float, default=1.0, help='Proportion of ResNet features to keep')
+base_parser.add_argument('--n_ensemble', type=int, default=5, help='Ensemble size')

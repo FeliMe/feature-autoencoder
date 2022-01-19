@@ -37,7 +37,7 @@ def get_camcan_files(path: str = CAMCANROOT, sequence: str = "t1") -> List[str]:
         files (List[str]): List of files
     """
     files = glob(os.path.join(path, 'normal/*/',
-                              f'*{sequence.upper()}w*registered_stripped.nii.gz'))
+                              f'*{sequence.upper()}w_stripped_registered.nii.gz'))
     assert len(files) > 0, "No files found in CamCAN"
     return files
 
