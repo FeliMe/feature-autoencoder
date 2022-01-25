@@ -5,6 +5,7 @@ from time import time
 import numpy as np
 import torch
 import wandb
+from torchcontrib.optim import SWA
 
 from fae.configs.base_config import base_parser
 from fae.data import datasets
@@ -53,9 +54,10 @@ wandb.watch(model)
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                              weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
+optimizer = SWA(optimizer, 7500, 250, config.lr * 0.5)
 # Print model
-# print(model.enc)
-# print(model.dec)
+print(model.ae.enc)
+print(model.ae.dec)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -76,7 +78,7 @@ def train_step(model, optimizer, x, device):
     optimizer.zero_grad()
     x = x.to(device)
     loss_dict = model.loss(x)
-    loss = loss_dict['loss']
+    loss = loss_dict['rec_loss']
     loss.backward()
     optimizer.step()
     return loss_dict
@@ -183,6 +185,15 @@ def train(model, optimizer, train_loader, val_loader, config):
 
             if i_iter >= config.max_steps:
                 print(f'Reached {config.max_steps} iterations. Finished training.')
+
+                # Apply SWA
+                print('Applying SWA...')
+                optimizer.swap_swa_sgd()
+                optimizer.bn_update(train_loader, model, device=config.device)
+
+                # Final validation
+                print("Final validation...")
+                validate(model, val_loader, config.device, i_iter)
                 return
 
         i_epoch += 1

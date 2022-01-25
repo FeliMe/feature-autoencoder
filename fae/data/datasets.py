@@ -217,6 +217,11 @@ def get_dataloaders(config):
     train_files, val_files = train_val_split(train_files, config.val_split)
     test_files, test_seg_files = get_files(config.test_dataset, config.sequence)
 
+    # train_files = train_files[:10]
+    # val_files = val_files[:5]
+    # test_files = test_files[:5]
+    print(len(train_files), len(val_files), len(test_files))
+
     train_imgs = np.concatenate(load_images(train_files, config))[:, None]
     val_imgs = np.concatenate(load_images(val_files, config))[:, None]
     test_imgs = np.concatenate(load_images(test_files, config))[:, None]

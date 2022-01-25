@@ -30,11 +30,13 @@ base_parser.add_argument('--num_images_log', type=int, default=10, help='Number 
 base_parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
 base_parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay')
 base_parser.add_argument('--max_steps', type=int, default=10000, help='Number of training steps')
-base_parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
+base_parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
 
 # Model settings
 base_parser.add_argument('--model', type=str, default='FeatureReconstructor', help='Model name')
-base_parser.add_argument('--hidden_dims', type=int, nargs='+', default=[400, 450, 500, 600], help='Autoencoder hidden dimensions')
+# base_parser.add_argument('--hidden_dims', type=int, nargs='+', default=[400, 450, 500, 600], help='Autoencoder hidden dimensions')
+base_parser.add_argument('--hidden_dims', type=int, nargs='+', default=[100, 150, 200, 300], help='Autoencoder hidden dimensions')
 base_parser.add_argument('--dropout', type=float, default=0.1, help='Dropout rate')
+base_parser.add_argument('--extractor_cnn_layers', type=str, nargs='+', default=['layer1', 'layer2'])
 base_parser.add_argument('--keep_feature_prop', type=float, default=1.0, help='Proportion of ResNet features to keep')
 base_parser.add_argument('--n_ensemble', type=int, default=5, help='Ensemble size')

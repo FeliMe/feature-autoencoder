@@ -28,6 +28,7 @@ dependencies:
   - neovim
   pip:
     - torchsummary
+    - timm
     - wandb
     NUMEXPR_MAX_THREADS: 64
 variables:

@@ -1,4 +1,3 @@
-from collections import defaultdict
 from typing import List
 
 
@@ -30,13 +29,16 @@ class BaseModel(nn.Module):
 
 
 def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int],
-                            use_batchnorm: bool = False, dropout: float = 0.0,
+                            norm_layer: str = None, dropout: float = 0.0,
                             bias: bool = False):
     """
     Vanilla feature encoder.
     Args:
         in_channels (int): Number of input channels
         hidden_dims (List[int]): List of hidden channel dimensions
+        norm_layer (str): Normalization layer to use
+        dropout (float): Dropout rate
+        bias (bool): Whether to use bias
     Returns:
         encoder (nn.Module): The encoder
     """
@@ -54,17 +56,19 @@ def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int],
                          nn.Conv2d(in_channels, hidden_dims[i], ks, stride=2,
                                    padding=pad, bias=bias))
 
-        # Batch normalization
-        if use_batchnorm:
-            layer.add_module(f"encoder_batchnorm_{i}",
-                             nn.BatchNorm2d(hidden_dims[i]))
+        # If not last layer
+        if i < len(hidden_dims) - 1:
+            # Normalization
+            if norm_layer is not None:
+                layer.add_module(f"encoder_norm_{i}",
+                                 eval(norm_layer)(hidden_dims[i]))
 
-        # LeakyReLU
-        layer.add_module(f"encoder_relu_{i}", nn.LeakyReLU())
+            # LeakyReLU
+            layer.add_module(f"encoder_relu_{i}", nn.LeakyReLU())
 
-        # Dropout
-        if dropout > 0:
-            layer.add_module(f"encoder_dropout_{i}", nn.Dropout2d(dropout))
+            # Dropout
+            if dropout > 0:
+                layer.add_module(f"encoder_dropout_{i}", nn.Dropout2d(dropout))
 
         # Add the layer to the encoder
         enc.add_module(f"encoder_layer_{i}", layer)
@@ -74,13 +78,16 @@ def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int],
 
 
 def vanilla_feature_decoder(out_channels: int, hidden_dims: List[int],
-                            use_batchnorm: bool = False, dropout: float = 0.0,
+                            norm_layer: str = None, dropout: float = 0.0,
                             bias: bool = False):
     """
     Vanilla feature decoder.
     Args:
         out_channels (int): Number of output channels
         hidden_dims (List[int]): List of hidden channel dimensions
+        norm_layer (str): Normalization layer to use
+        dropout (float): Dropout rate
+        bias (bool): Whether to use bias
     Returns:
         decoder (nn.Module): The decoder
     """
@@ -101,10 +108,10 @@ def vanilla_feature_decoder(out_channels: int, hidden_dims: List[int],
                                             ks, stride=2, padding=pad,
                                             bias=bias))
 
-        # Batch normalization
-        if use_batchnorm:
-            layer.add_module(f"decoder_batchnorm_{i}",
-                             nn.BatchNorm2d(hidden_dims[i - 1]))
+        # Normalization
+        if norm_layer is not None:
+            layer.add_module(f"decoder_norm_{i}",
+                             eval(norm_layer)(hidden_dims[i - 1]))
 
         # LeakyReLU
         layer.add_module(f"decoder_relu_{i}", nn.LeakyReLU())
@@ -130,40 +137,50 @@ class FeatureAutoencoder(nn.Module):
         self.config = config
         self.enc = vanilla_feature_encoder(config.in_channels,
                                            config.hidden_dims,
-                                           use_batchnorm=True,
+                                           norm_layer="nn.BatchNorm2d",
                                            dropout=config.dropout,
                                            bias=False)
         self.dec = vanilla_feature_decoder(config.in_channels,
                                            config.hidden_dims,
-                                           use_batchnorm=True,
+                                           norm_layer="nn.BatchNorm2d",
                                            dropout=config.dropout,
                                            bias=False)
 
     def forward(self, x: Tensor) -> Tensor:
         z = self.enc(x)
-        x_hat = self.dec(z)
-        return x_hat
+        rec = self.dec(z)
+        return rec
+
 
 class FeatureReconstructor(BaseModel):
     def __init__(self, config):
         super().__init__()
         self.extractor = Extractor(inp_size=config.image_size,
+                                   cnn_layers=config.extractor_cnn_layers,
                                    keep_feature_prop=config.keep_feature_prop)
 
         config.in_channels = self.extractor.c_feats
         self.ae = FeatureAutoencoder(config)
+
+        self.loss_fn = SSIMLoss(window_size=5, size_average=False)
+        # self.loss_fn = nn.L1Loss(reduction='none')
+        # self.loss_fn = nn.MSELoss(reduction='none')
 
     def forward(self, x: Tensor):
         with torch.no_grad():
             feats = self.extractor(x)
         return feats, self.ae(feats)
 
+    def get_feats(self, x: Tensor) -> Tensor:
+        return self.extractor(x)
+
+    def get_rec(self, feats: Tensor) -> Tensor:
+        return self.ae(feats)
+
     def loss(self, x: Tensor):
         feats, rec = self(x)
-        loss = SSIMLoss(size_average=True)(rec, feats).mean()
-        # loss = F.l1_loss(rec, feats, reduction='mean')
-        # loss = F.mse_loss(rec, feats, reduction='mean')
-        return {'loss': loss}
+        loss = self.loss_fn(rec, feats).mean()
+        return {'rec_loss': loss}
 
     def predict_anomaly(self, x: Tensor):
         """Returns per image anomaly maps and anomaly scores"""
@@ -171,9 +188,7 @@ class FeatureReconstructor(BaseModel):
         feats, rec = self(x)
 
         # Compute anomaly map
-        anomaly_map = SSIMLoss(size_average=False)(rec, feats).mean(1, keepdim=True)
-        # anomaly_map = F.l1_loss(rec, feats, reduction='none').mean(1, keepdim=True)
-        # anomaly_map = F.mse_loss(rec, feats, reduction='none').mean(1, keepdim=True)
+        anomaly_map = self.loss_fn(rec, feats).mean(1, keepdim=True)
         anomaly_map = F.interpolate(anomaly_map, x.shape[-2:], mode='bilinear',
                                     align_corners=True)
 
@@ -203,12 +218,12 @@ class FeatureVAE(BaseModel):
         hidden_dims = config.hidden_dims
         enc_hidden_dims = hidden_dims[:-1] + [hidden_dims[-1] * 2]
         self.enc = vanilla_feature_encoder(self.extractor.c_feats, enc_hidden_dims,
-                                           use_batchnorm=True,
+                                           norm_layer="nn.BatchNorm2d",
                                            dropout=config.dropout, bias=False)
         # self.mu = nn.Conv2d(hidden_dims[-1], hidden_dims[-1], 1)
         # self.logvar = nn.Conv2d(hidden_dims[-1], hidden_dims[-1], 1)
         self.dec = vanilla_feature_decoder(self.extractor.c_feats, hidden_dims,
-                                           use_batchnorm=True,
+                                           norm_layer="nn.BatchNorm2d",
                                            dropout=config.dropout, bias=False)
 
     @staticmethod
@@ -259,20 +274,27 @@ class FeatureVAE(BaseModel):
 class FeatureDiscriminator(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.encoder = vanilla_feature_encoder(
-            config.c_feats,
+        self.enc = vanilla_feature_encoder(
+            config.in_channels,
             hidden_dims=config.discriminator_hidden_dims,
-            use_batchnorm=False,
-            dropout=0.0, bias=True
+            norm_layer="nn.BatchNorm2d",
+            # norm_layer="nn.InstanceNorm2d",
+            dropout=0.0, bias=False
         )
-        print(self.encoder)
+        self.enc.add_module("conv_out",
+                            nn.Conv2d(
+                                config.discriminator_hidden_dims[-1], 1,
+                                kernel_size=1, padding=0, bias=True))
 
     def forward(self, x):
+        # return output and feature maps
         res = [x]
-        for name, module in self.encoder.named_modules():
+        for name, module in self.enc.named_modules():
             if len(name) > 0 and '.' not in name:
                 res.append(module(res[-1]))
-        return res[1:]
+        output = res[-1]
+        feature_maps = res[1:]
+        return output, feature_maps
 
 
 class EnsembleFAE(BaseModel):
@@ -298,7 +320,7 @@ class EnsembleFAE(BaseModel):
             SSIMLoss(size_average=True)(recs[:, i], feats).mean() for i in range(self.n_ensemble)
             # F.l1_loss(recs[:, i], feats, reduction='mean') for i in range(self.n_ensemble)
         ]).mean()
-        return {'loss': loss}
+        return {'rec_loss': loss}
 
     def predict_anomaly(self, x: Tensor):
         """Returns an anomaly map and an anomaly score."""
@@ -326,21 +348,30 @@ class EnsembleFAE(BaseModel):
 
 
 if __name__ == '__main__':
+    # Config
     from argparse import Namespace
     config = Namespace()
     config.image_size = 128
-    config.n_ensemble = 5
     config.hidden_dims = [400, 450, 500, 600]
     config.dropout = 0.2
-    config.discriminator_hidden_dims = [400, 450, 500, 1]
+    config.extractor_cnn_layers = ['layer1', 'layer2']
     config.keep_feature_prop = 1.0
-    device = "cuda"
+    device = "cpu"
 
-    x = torch.randn(32, 1, *[config.image_size] * 2).to(device)
+    # Model
     fae = FeatureReconstructor(config).to(device)
+    print(fae.ae.enc)
+    print("")
+    print(fae.ae.dec)
+
+    # Data
+    x = torch.randn(32, 1, *[config.image_size] * 2).to(device)
+
+    # Forward
     from time import perf_counter
     t_start = perf_counter()
-    anomaly_map, anomaly_score = fae.predict_anomaly(x)
+    feats, rec = fae(x)
+    print(feats.shape, rec.shape)
+    # anomaly_map, anomaly_score = fae.predict_anomaly(x)
     # loss = fae.loss(x)
     print(f"{perf_counter() - t_start:.2f}s")
-    import IPython; IPython.embed(); exit(1)
