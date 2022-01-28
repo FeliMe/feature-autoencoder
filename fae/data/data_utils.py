@@ -69,6 +69,9 @@ def load_nii_nn(path: str, size: int,
     if equalize_histogram:
         vol = histogram_equalization(vol)
 
+    # Expand channel dimension
+    vol = vol[:, None]
+
     return vol
 
 

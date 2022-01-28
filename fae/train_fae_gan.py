@@ -81,7 +81,7 @@ optimizer_d = torch.optim.Adam(D.parameters(), lr=config.lr_d,
 
 print("Loading data...")
 t_load_data_start = time()
-train_loader, val_loader, test_loader = datasets.get_dataloaders(config)
+train_loader, test_loader = datasets.get_dataloaders(config)
 print(f'Loaded {config.train_dataset} and {config.test_dataset} in '
       f'{time() - t_load_data_start:.2f}s')
 

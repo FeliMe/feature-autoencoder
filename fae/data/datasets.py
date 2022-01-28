@@ -24,7 +24,6 @@ from fae.data.data_utils import (
     load_files_to_ram,
     load_nii_nn,
     load_segmentation,
-    train_val_split,
 )
 
 
@@ -202,7 +201,6 @@ def get_dataloaders(config):
         config (Namespace): Configuration
     Returns:
         train_loader (torch.utils.data.DataLoader): Training loader
-        val_loader (torch.utils.data.DataLoader): Validation loader
         test_loader (torch.utils.data.DataLoader): Test loader
     """
     def get_files(ds_name, sequence):
@@ -214,18 +212,16 @@ def get_dataloaders(config):
         return get_files_fn(sequence=sequence)
 
     train_files = get_files(config.train_dataset, config.sequence)
-    train_files, val_files = train_val_split(train_files, config.val_split)
+    # train_files, val_files = train_val_split(train_files, config.val_split)
     test_files, test_seg_files = get_files(config.test_dataset, config.sequence)
 
     # train_files = train_files[:10]
-    # val_files = val_files[:5]
     # test_files = test_files[:5]
-    print(len(train_files), len(val_files), len(test_files))
+    print(len(train_files), len(test_files))
 
-    train_imgs = np.concatenate(load_images(train_files, config))[:, None]
-    val_imgs = np.concatenate(load_images(val_files, config))[:, None]
-    test_imgs = np.concatenate(load_images(test_files, config))[:, None]
-    test_segs = np.concatenate(load_segmentations(test_seg_files, config))[:, None]
+    train_imgs = np.concatenate(load_images(train_files, config))
+    test_imgs = np.concatenate(load_images(test_files, config))
+    test_segs = np.concatenate(load_segmentations(test_seg_files, config))
 
     # Shuffle test data
     perm = np.random.permutation(len(test_imgs))
@@ -236,19 +232,14 @@ def get_dataloaders(config):
                               batch_size=config.batch_size,
                               shuffle=True,
                               num_workers=config.num_workers)
-    val_loader = DataLoader(ValidationDataset(val_imgs, config.anomaly_size),
-                            batch_size=config.batch_size,
-                            shuffle=False,
-                            num_workers=config.num_workers)
     test_loader = DataLoader(TestDataset(test_imgs, test_segs),
                              batch_size=config.batch_size,
                              shuffle=False,
                              num_workers=config.num_workers)
     print(f"Len train_loader: {len(train_loader)}")
-    print(f"Len val_loader: {len(val_loader)}")
     print(f"Len test_loader: {len(test_loader)}")
 
-    return train_loader, val_loader, test_loader
+    return train_loader, test_loader
 
 
 if __name__ == "__main__":

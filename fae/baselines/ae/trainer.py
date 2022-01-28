@@ -5,21 +5,49 @@ from time import time
 import numpy as np
 import torch
 import wandb
-from torchcontrib.optim import SWA
 
-from fae.configs.base_config import base_parser
-from fae.data import datasets
-from fae.models import models
+from fae.baselines.ae.model import AE
+from fae.data.datasets import get_dataloaders
 from fae.utils.utils import seed_everything
-from fae.utils.evaluation import compute_average_precision, compute_auroc
+from fae.utils.evaluation import compute_auroc, compute_average_precision
 
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
 
-parser = ArgumentParser(
-    description="Arguments for training the Feature Autoencoder",
-    parents=[base_parser]
-)
+parser = ArgumentParser()
+# General script settings
+parser.add_argument('--seed', type=int, default=42, help='Random seed')
+parser.add_argument('--debug', action='store_true', help='Debug mode')
+
+# Data settings
+parser.add_argument('--train_dataset', type=str, default='camcan', help='Training dataset name')
+parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
+                    choices=['brats', 'mslub', 'msseg', 'wmh'])
+parser.add_argument('--image_size', type=int, default=128, help='Image size')
+parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
+parser.add_argument('--slice_range', type=int, nargs='+', default=(55, 135), help='Lower and Upper slice index')
+parser.add_argument('--normalize', type=bool, default=False, help='Normalize images between 0 and 1')
+parser.add_argument('--equalize_histogram', type=bool, default=True, help='Equalize histogram')
+parser.add_argument('--num_workers', type=int, default=4, help='Number of workers')
+
+# Logging settings
+parser.add_argument('--val_frequency', type=int, default=200, help='Validation frequency')
+parser.add_argument('--val_steps', type=int, default=50, help='Steps per validation')
+parser.add_argument('--log_frequency', type=int, default=50, help='Logging frequency')
+parser.add_argument('--num_images_log', type=int, default=10, help='Number of images to log')
+
+# Hyperparameters
+parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
+parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay')
+parser.add_argument('--max_steps', type=int, default=10000, help='Number of training steps')
+parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
+
+# Model settings
+parser.add_argument('--hidden_dims', type=int, nargs='+', default=[32, 64, 128, 256], help='Autoencoder hidden dimensions')
+parser.add_argument('--latent_dim', type=int, default=128, help='Size of the latent space')
+parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate')
+parser.add_argument('--loss_fn', type=str, default='l1', help='loss function',
+                    choices=['l1', 'mse', 'ssim'])
 
 args = parser.parse_args()
 
@@ -38,26 +66,15 @@ seed_everything(config.seed)
 """"""""""""""""""""""""""""""""" Init model """""""""""""""""""""""""""""""""
 
 
-def get_model(config):
-    if config.model in models.__dict__:
-        model_cls = models.__dict__[config.model]
-    else:
-        raise ValueError(f'Model {config.model} not found')
-
-    return model_cls(config)
-
-
 print("Initializing model...")
-model = get_model(config).to(config.device)
-# Track model with w&b
-wandb.watch(model)
+model = AE(config).to(config.device)
+
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                              weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
-optimizer = SWA(optimizer, 7500, 250, config.lr * 0.5)
 # Print model
-print(model.ae.enc)
-print(model.ae.dec)
+print(model.encoder)
+print(model.decoder)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -65,9 +82,8 @@ print(model.ae.dec)
 
 print("Loading data...")
 t_load_data_start = time()
-train_loader, test_loader = datasets.get_dataloaders(config)
-print(f'Loaded {config.train_dataset} and {config.test_dataset} in '
-      f'{time() - t_load_data_start:.2f}s')
+train_loader, test_loader = get_dataloaders(config)
+print(f'Loaded datasets in {time() - t_load_data_start:.2f}s')
 
 
 """"""""""""""""""""""""""""""""""" Training """""""""""""""""""""""""""""""""""
@@ -77,20 +93,22 @@ def train_step(model, optimizer, x, device):
     model.train()
     optimizer.zero_grad()
     x = x.to(device)
-    loss_dict = model.loss(x)
+    rec = model(x)
+    loss_dict = model.loss(x, rec)
     loss = loss_dict['rec_loss']
     loss.backward()
     optimizer.step()
-    return loss_dict
+    return loss_dict, rec
 
 
 def val_step(model, x, device):
     model.eval()
     x = x.to(device)
     with torch.no_grad():
-        loss_dict = model.loss(x)
-        anomaly_map, anomaly_score = model.predict_anomaly(x)
-    return loss_dict, anomaly_map.cpu(), anomaly_score.cpu()
+        rec = model(x)
+        loss_dict = model.loss(x, rec)
+        anomaly_map, anomaly_score = model.predict_anomaly(x, rec)
+    return loss_dict, anomaly_map.cpu(), anomaly_score.cpu(), rec.cpu()
 
 
 def validate(model, val_loader, device, i_iter):
@@ -103,11 +121,11 @@ def validate(model, val_loader, device, i_iter):
     for x, y in val_loader:
         # x, y, anomaly_map: [b, 1, h, w]
         # Compute loss, anomaly map and anomaly score
-        loss_dict, anomaly_map, anomaly_score = val_step(model, x, device)
+        loss_dict, anomaly_map, anomaly_score, rec = val_step(model, x, device)
 
         # Compute metrics
-        pixel_ap = compute_average_precision(anomaly_map, y)
         label = torch.where(y.sum(dim=(1, 2, 3)) > 16, 1, 0)  # TODO: Turn to 0
+        pixel_ap = compute_average_precision(anomaly_map, y)
 
         for k, v in loss_dict.items():
             val_losses[k].append(v.item())
@@ -134,7 +152,7 @@ def validate(model, val_loader, device, i_iter):
     log_msg += f"Average positive label: {labels.float().mean():.4f}\n"
     print(log_msg)
 
-    # Log to w&b
+    # Log to tensorboard
     wandb.log({
         f'val/{k}': np.mean(v) for k, v in val_losses.items()
     }, step=i_iter)
@@ -143,8 +161,9 @@ def validate(model, val_loader, device, i_iter):
         'val/sample-ap': np.mean(sample_ap),
         'val/sample-auroc': np.mean(sample_auroc),
         'val/input images': wandb.Image(x.cpu()[:config.num_images_log]),
+        'val/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
         'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
-        'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log])
+        'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log]),
     }, step=i_iter)
 
 
@@ -159,7 +178,7 @@ def train(model, optimizer, train_loader, val_loader, config):
     while True:
         for x in train_loader:
             i_iter += 1
-            loss_dict = train_step(model, optimizer, x, config.device)
+            loss_dict, rec = train_step(model, optimizer, x, config.device)
 
             # Add to losses
             for k, v in loss_dict.items():
@@ -172,9 +191,13 @@ def train(model, optimizer, train_loader, val_loader, config):
                 log_msg += f" - time: {time() - t_start:.2f}s"
                 print(log_msg)
 
-                # Log to w&b
+                # Log to tensorboard
+                x = x.cpu().detach()
+                rec = rec.cpu().detach()
+                wandb.log({f'train/{k}': np.mean(v) for k, v in train_losses.items()})
                 wandb.log({
-                    f'train/{k}': np.mean(v) for k, v in train_losses.items()
+                    'train/input images': wandb.Image(x.cpu()[:config.num_images_log]),
+                    'train/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
                 }, step=i_iter)
 
                 # Reset
@@ -185,15 +208,6 @@ def train(model, optimizer, train_loader, val_loader, config):
 
             if i_iter >= config.max_steps:
                 print(f'Reached {config.max_steps} iterations. Finished training.')
-
-                # Apply SWA
-                print('Applying SWA...')
-                optimizer.swap_swa_sgd()
-                optimizer.bn_update(train_loader, model, device=config.device)
-
-                # Final validation
-                print("Final validation...")
-                validate(model, val_loader, config.device, i_iter)
                 return
 
         i_epoch += 1
