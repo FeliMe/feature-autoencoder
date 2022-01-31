@@ -126,13 +126,12 @@ def validate(model, val_loader, device, i_iter):
     anomaly_scores = []
     i_val_step = 0
 
-    for x, y in val_loader:
+    for x, y, label in val_loader:
         # x, y, anomaly_map: [b, 1, h, w]
         # Compute loss, anomaly map and anomaly score
         loss_dict, anomaly_map, anomaly_score, rec = val_step(model, x, device)
 
         # Compute metrics
-        label = torch.where(y.sum(dim=(1, 2, 3)) > 16, 1, 0)  # TODO: Turn to 0
         pixel_ap = compute_average_precision(anomaly_map, y)
 
         for k, v in loss_dict.items():

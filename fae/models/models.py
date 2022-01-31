@@ -9,7 +9,6 @@ import wandb
 
 from fae.models.feature_extractor import Extractor
 from fae.utils.pytorch_ssim import SSIMLoss
-from fae.utils.utils import mahalanobis_distance_image
 
 
 class BaseModel(nn.Module):
@@ -210,69 +209,6 @@ class FeatureReconstructor(BaseModel):
         return anomaly_map, anomaly_score
 
 
-class FeatureVAE(BaseModel):
-    def __init__(self, config):
-        super().__init__()
-        self.extractor = Extractor(inp_size=config.image_size,
-                                   keep_feature_prop=config.keep_feature_prop)
-
-        config.c_feats = self.extractor.c_feats
-        hidden_dims = config.hidden_dims
-        enc_hidden_dims = hidden_dims[:-1] + [hidden_dims[-1] * 2]
-        self.enc = vanilla_feature_encoder(self.extractor.c_feats, enc_hidden_dims,
-                                           norm_layer="nn.BatchNorm2d",
-                                           dropout=config.dropout, bias=False)
-        # self.mu = nn.Conv2d(hidden_dims[-1], hidden_dims[-1], 1)
-        # self.logvar = nn.Conv2d(hidden_dims[-1], hidden_dims[-1], 1)
-        self.dec = vanilla_feature_decoder(self.extractor.c_feats, hidden_dims,
-                                           norm_layer="nn.BatchNorm2d",
-                                           dropout=config.dropout, bias=False)
-
-    @staticmethod
-    def reparameterize(mu: Tensor, logvar: Tensor) -> Tensor:
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return eps * std + mu
-
-    def forward(self, x: Tensor):
-        with torch.no_grad():
-            feats = self.extractor(x)
-        enc_out = self.enc(feats)
-        mu, logvar = torch.chunk(enc_out, 2, dim=1)
-        # mu = self.mu(enc_out)
-        # logvar = self.logvar(enc_out)
-        z = self.reparameterize(mu, logvar)
-        y = self.dec(z)
-        return feats, y, mu, logvar
-
-    def loss(self, x: Tensor, kl_weight: float = 1.0):
-        """Computes the VAE loss function.
-        KL(N(\mu, \sigma), N(0, 1)) = \log \frac{1}{\sigma} + \frac{\sigma^2 + \mu^2}{2} - \frac{1}{2}
-
-        Args:
-            x (Tensor): Input tensor
-            kl_weight (float): Weight for the KL loss
-        """
-        feats, y, mu, logvar = self(x)
-        rec_loss = SSIMLoss(size_average=True)(y, feats)
-        kl_loss = torch.mean(-0.5 * (1 + logvar - mu ** 2 - logvar.exp()))
-        loss = rec_loss + kl_weight * kl_loss
-        return {
-            'loss': loss,
-            'rec_loss': rec_loss,
-            'kl_loss': kl_loss,
-        }
-
-    def predict_anomaly(self, x):
-        feats, mu, _, _ = self(x)
-        map_small = SSIMLoss(size_average=False)(mu, feats).mean(1, keepdim=True)
-        # map_small = F.l1_loss(y, feats, reduction='none').sum(1, keepdim=True)
-        anomaly_map = F.interpolate(map_small, x.shape[-2:], mode='bilinear',
-                                    align_corners=True)
-        anomaly_score = torch.tensor([m[x_ > 0].mean() for m, x_ in zip(anomaly_map, x)])
-        return anomaly_map, anomaly_score
-
-
 class FeatureDiscriminator(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -280,7 +216,6 @@ class FeatureDiscriminator(nn.Module):
             config.in_channels,
             hidden_dims=config.discriminator_hidden_dims,
             norm_layer="nn.BatchNorm2d",
-            # norm_layer="nn.InstanceNorm2d",
             dropout=0.0, bias=False
         )
         self.enc.add_module("conv_out",
@@ -297,50 +232,6 @@ class FeatureDiscriminator(nn.Module):
         output = res[-1]
         feature_maps = res[1:]
         return output, feature_maps
-
-
-class EnsembleFAE(BaseModel):
-    def __init__(self, config):
-        super().__init__()
-        self.n_ensemble = config.n_ensemble
-        self.extractor = Extractor(inp_size=config.image_size,
-                                   keep_feature_prop=config.keep_feature_prop)
-        config.in_channels = self.extractor.c_feats
-        self.faes = nn.ModuleList([FeatureAutoencoder(config) for _ in range(self.n_ensemble)])
-
-    def forward(self, x: Tensor):
-        feats = self.extractor(x)
-        recs = []
-        for fae in self.faes:
-            rec = fae(feats)
-            recs.append(rec)
-        return feats, torch.stack(recs, dim=1)  # (B, n_ensemble, C, H, W)
-
-    def loss(self, x: Tensor):
-        feats, recs = self(x)
-        loss = torch.stack([
-            SSIMLoss(size_average=True)(recs[:, i], feats).mean() for i in range(self.n_ensemble)
-            # F.l1_loss(recs[:, i], feats, reduction='mean') for i in range(self.n_ensemble)
-        ]).mean()
-        return {'rec_loss': loss}
-
-    def predict_anomaly(self, x: Tensor):
-        """Returns an anomaly map and an anomaly score."""
-        feats, recs = self(x)
-
-        # Compute pixel-wise mahalanobis distance
-        anomaly_map = torch.stack([
-            mahalanobis_distance_image(feat, rec) for feat, rec in zip(feats, recs)
-        ])[:, None]
-
-        # Resize to original size
-        anomaly_map = F.interpolate(anomaly_map, x.shape[-2:], mode='bilinear',
-                                    align_corners=True)
-
-        # Compute anomaly score
-        anomaly_score = torch.tensor([m[x_ > 0].mean() for m, x_ in zip(anomaly_map, x)])
-
-        return anomaly_map, anomaly_score
 
 
 if __name__ == '__main__':

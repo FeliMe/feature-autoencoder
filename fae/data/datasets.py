@@ -192,7 +192,10 @@ class TestDataset(Dataset):
         return len(self.imgs)
 
     def __getitem__(self, idx):
-        return [self.imgs[idx], self.segs[idx]]
+        img = self.imgs[idx]
+        seg = self.segs[idx]
+        label = np.where(seg.sum(dim=(1, 2, 3)) > 0, 1, 0)
+        return img, seg, label
 
 
 def get_dataloaders(config):

@@ -101,11 +101,14 @@ def train_step(model, optimizer, x, y, device):
     optimizer.zero_grad()
     x = x.to(device)
     y = y.to(device)
+
     pred = model(x)
     loss = F.binary_cross_entropy(pred, y)
     loss.backward()
     optimizer.step()
-    return loss.item(), pred
+
+    anomaly_map = pred.detach().cpu()
+    return loss.item(), anomaly_map
 
 
 def val_step(model, x, y, device):
@@ -128,13 +131,10 @@ def validate(model, val_loader, device, i_iter):
     anomaly_scores = []
     i_val_step = 0
 
-    for x, y in val_loader:
+    for x, y, label in val_loader:
         # x, y, anomaly_map: [b, 1, h, w]
         # Compute loss, anomaly map and anomaly score
         loss, pixel_ap, anomaly_map, anomaly_score = val_step(model, x, y, device)
-
-        # Compute metrics
-        label = torch.where(y.sum(dim=(1, 2, 3)) > 16, 1, 0)  # TODO: Turn to 0
 
         val_losses.append(loss)
         pixel_aps.append(pixel_ap)

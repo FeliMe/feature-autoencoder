@@ -68,7 +68,7 @@ args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
            mode="disabled" if args.debug else "online",
-           dir=dirname(dirname(dirname(__file__))))
+           dir=dirname(dirname(dirname(__file__))), )
 config = wandb.config
 
 
@@ -249,7 +249,7 @@ def train_step_encoder(model, optimizer_e, x, config):
 
 def train_encoder(model, optimizer_e, train_loader, test_loader, config):
     print('Starting training Encoder...')
-    i_iter = 0
+    i_iter = config.max_steps_encoder
     i_epoch = 0
 
     train_losses = defaultdict(list)
@@ -332,7 +332,10 @@ def val_step_encoder(model, x, config):
 
         # Anomaly score
         # img_diff = (x - x_rec).pow(2).mean((1, 2, 3))
-        img_diff = SSIMLoss(size_average=False)(x_rec, x).mean((1, 2, 3))
+        img_diff = []
+        for i in range(x.shape[0]):
+            roi = anomaly_map[i][x[i] > 0]
+            img_diff.append(roi.mean())
         feat_diff = (x_feats - x_rec_feats).pow(2).mean((1))
         anomaly_score = img_diff + config.feat_weight * feat_diff
 
@@ -346,14 +349,13 @@ def validate_encoder(model, test_loader, i_iter, config):
     anomaly_scores = []
     i_val_step = 0
 
-    for x, y in test_loader:
+    for x, y, label in test_loader:
         # x, y, anomaly_map: [b, 1, h, w]
         x = x.to(config.device)
         # Compute loss, anomaly map and anomaly score
         loss_dict, anomaly_map, anomaly_score, rec = val_step_encoder(model, x, config)
 
         # Compute metrics
-        label = torch.where(y.sum(dim=(1, 2, 3)) > 16, 1, 0)  # TODO: Turn to 0
         pixel_ap = compute_average_precision(anomaly_map, y)
 
         for k, v in loss_dict.items():
