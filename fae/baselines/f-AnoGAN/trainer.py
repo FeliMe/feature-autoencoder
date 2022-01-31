@@ -1,6 +1,6 @@
-
 from argparse import ArgumentParser
 from collections import defaultdict
+from os.path import dirname
 from time import time
 
 import numpy as np
@@ -11,6 +11,7 @@ import wandb
 
 from model import fAnoGAN
 from fae.data.datasets import get_dataloaders
+from fae.utils.pytorch_ssim import SSIMLoss
 from fae.utils.utils import seed_everything
 from fae.utils.evaluation import compute_auroc, compute_average_precision
 from fanogan_utils import calc_gradient_penalty
@@ -22,8 +23,12 @@ parser = ArgumentParser()
 # General script settings
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--debug', action='store_true', help='Debug mode')
+parser.add_argument('--resume_path', type=str, help='W&B path to checkpoint to resume training from')
 
 # Data settings
+parser.add_argument('--train_dataset', type=str, default='camcan', help='Training dataset name')
+parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
+                    choices=['brats', 'mslub', 'msseg', 'wmh'])
 parser.add_argument('--image_size', type=int, default=128, help='Image size')
 parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
 parser.add_argument('--slice_range', type=int, nargs='+', default=(55, 135), help='Lower and Upper slice index')
@@ -34,6 +39,7 @@ parser.add_argument('--num_workers', type=int, default=4, help='Number of worker
 # Logging settings
 parser.add_argument('--log_frequency', type=int, default=100, help='Logging frequency')
 parser.add_argument('--val_frequency', type=int, default=200, help='Validation frequency')
+parser.add_argument('--save_frequency', type=int, default=200, help='Model checkpointing frequency')
 parser.add_argument('--val_steps', type=int, default=50, help='Steps per validation')
 parser.add_argument('--num_images_log', type=int, default=10, help='Number of images to log')
 
@@ -61,7 +67,8 @@ args = parser.parse_args()
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
-           mode="disabled" if args.debug else "online")
+           mode="disabled" if args.debug else "online",
+           dir=dirname(dirname(dirname(__file__))))
 config = wandb.config
 
 
@@ -91,6 +98,10 @@ print("\nDiscriminator:")
 summary(model.D, (1, config.image_size, config.image_size))
 print("\nEncoder:")
 summary(model.E, (1, config.image_size, config.image_size))
+
+if config.resume_path is not None:
+    print("Loading model from checkpoint...")
+    model.load(config.resume_path)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -196,6 +207,10 @@ def train_gan(model, optimizer_g, optimizer_d, train_loader, config):
                 # Reset
                 train_losses = defaultdict(list)
 
+            # Save model weights
+            if i_iter % config.save_frequency == 0:
+                model.save('last_gan.pt')
+
             if i_iter >= config.max_steps_gan:
                 print(f'Reached {config.max_steps_gan} iterations. Finished training GAN.')
                 return
@@ -217,7 +232,8 @@ def train_step_encoder(model, optimizer_e, x, config):
     x_rec_feats = model.D.extract_feature(x_rec)  # get features from reconstructed image
 
     # Reconstruction loss
-    loss_img = F.mse_loss(x_rec, x)
+    # loss_img = F.mse_loss(x_rec, x)
+    loss_img = SSIMLoss(size_average=True)(x_rec, x)
     loss_feats = F.mse_loss(x_rec_feats, x_feats)
     loss = loss_img + loss_feats * config.feat_weight
 
@@ -278,6 +294,10 @@ def train_encoder(model, optimizer_e, train_loader, test_loader, config):
             if i_iter % config.val_frequency == 0:
                 validate_encoder(model, test_loader, i_iter, config)
 
+            # Save model weights
+            if i_iter % config.save_frequency == 0:
+                model.save('last_encoder.pt')
+
             if i_iter >= config.max_steps_encoder:
                 print(f'Reached {config.max_steps_encoder} iterations. Finished training encoder.')
                 return
@@ -295,7 +315,8 @@ def val_step_encoder(model, x, config):
         x_rec_feats = model.D.extract_feature(x_rec)  # get features from reconstructed image
 
         # Reconstruction loss
-        loss_img = F.mse_loss(x_rec, x)
+        # loss_img = F.mse_loss(x_rec, x)
+        loss_img = SSIMLoss(size_average=True)(x_rec, x)
         loss_feats = F.mse_loss(x_rec_feats, x_feats)
         loss = loss_img + loss_feats * config.feat_weight
 
@@ -306,10 +327,12 @@ def val_step_encoder(model, x, config):
         }
 
         # Anomaly map is the residual of the input and the reconstructed image
-        anomaly_map = (x - x_rec).abs().mean(1, keepdim=True)
+        # anomaly_map = (x - x_rec).abs().mean(1, keepdim=True)
+        anomaly_map = SSIMLoss(size_average=False)(x_rec, x).mean(1, keepdim=True)
 
         # Anomaly score
-        img_diff = (x - x_rec).pow(2).mean((1, 2, 3))
+        # img_diff = (x - x_rec).pow(2).mean((1, 2, 3))
+        img_diff = SSIMLoss(size_average=False)(x_rec, x).mean((1, 2, 3))
         feat_diff = (x_feats - x_rec_feats).pow(2).mean((1))
         anomaly_score = img_diff + config.feat_weight * feat_diff
 
@@ -376,3 +399,4 @@ def validate_encoder(model, test_loader, i_iter, config):
 if __name__ == '__main__':
     train_gan(model, optimizer_g, optimizer_d, train_loader, config)
     train_encoder(model, optimizer_e, train_loader, test_loader, config)
+    # validate_encoder(model, test_loader, config.max_steps_encoder + 1, config):

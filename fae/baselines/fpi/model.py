@@ -1,6 +1,9 @@
+import os
+
 import torch
 import torch.nn as nn
 from torch import Tensor
+import wandb
 
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1,
@@ -141,6 +144,19 @@ class WideResNetAE(nn.Module):
         pred = self.decoder(latent)
         pred = torch.sigmoid(pred)
         return pred
+
+    def load(self, path: str):
+        """
+        Load model from W&B
+        :param path: Path to the model <entity>/<project>/<run_id>/<model_name>
+        """
+        name = os.path.basename(path)
+        run_path = os.path.dirname(path)
+        weights = wandb.restore(name, run_path=run_path)
+        self.load_state_dict(torch.load(weights.name))
+
+    def save(self, name: str):
+        torch.save(self.state_dict(), os.path.join(wandb.run.dir, name))
 
 
 if __name__ == '__main__':

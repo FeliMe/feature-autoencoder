@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+from os.path import dirname
 from time import time
 
 import numpy as np
@@ -19,6 +20,7 @@ parser = ArgumentParser()
 # General script settings
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--debug', action='store_true', help='Debug mode')
+parser.add_argument('--resume_path', type=str, help='W&B path to checkpoint to resume training from')
 
 # Data settings
 parser.add_argument('--train_dataset', type=str, default='camcan', help='Training dataset name')
@@ -35,6 +37,7 @@ parser.add_argument('--num_workers', type=int, default=4, help='Number of worker
 parser.add_argument('--val_frequency', type=int, default=200, help='Validation frequency')
 parser.add_argument('--val_steps', type=int, default=50, help='Steps per validation')
 parser.add_argument('--log_frequency', type=int, default=50, help='Logging frequency')
+parser.add_argument('--save_frequency', type=int, default=200, help='Model checkpointing frequency')
 parser.add_argument('--num_images_log', type=int, default=10, help='Number of images to log')
 
 # Hyperparameters
@@ -52,7 +55,8 @@ args = parser.parse_args()
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
-           mode="disabled" if args.debug else "online")
+           mode="disabled" if args.debug else "online",
+           dir=dirname(dirname(dirname(__file__))))
 config = wandb.config
 
 
@@ -74,6 +78,10 @@ optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                              weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
 # Print model
 summary(model, (1, config.image_size, config.image_size))
+
+if config.resume_path is not None:
+    print("Loading model from checkpoint...")
+    model.load(config.resume_path)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -207,6 +215,10 @@ def train(model, optimizer, train_loader, val_loader, config):
 
             if i_iter % config.val_frequency == 0:
                 validate(model, val_loader, config.device, i_iter)
+
+            # Save model weights
+            if i_iter % config.save_frequency == 0:
+                model.save('last.pt')
 
             if i_iter >= config.max_steps:
                 print(f'Reached {config.max_steps} iterations. Finished training.')

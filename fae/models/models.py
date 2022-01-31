@@ -1,10 +1,11 @@
+import os
 from typing import List
-
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+import wandb
 
 from fae.models.feature_extractor import Extractor
 from fae.utils.pytorch_ssim import SSIMLoss
@@ -15,17 +16,24 @@ class BaseModel(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, x):
+    def forward(self, x: Tensor):
         raise NotImplementedError
 
-    def predict_anomaly(self, x):
+    def predict_anomaly(self, x: Tensor):
         raise NotImplementedError
 
-    def load(self, path):
-        raise NotImplementedError
+    def load(self, path: str):
+        """
+        Load model from W&B
+        :param path: Path to the model <entity>/<project>/<run_id>/<model_name>
+        """
+        name = os.path.basename(path)
+        run_path = os.path.dirname(path)
+        weights = wandb.restore(name, run_path=run_path)
+        self.load_state_dict(torch.load(weights.name))
 
-    def save(self, path):
-        raise NotImplementedError
+    def save(self, name: str):
+        torch.save(self.state_dict(), os.path.join(wandb.run.dir, name))
 
 
 def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int],
@@ -201,12 +209,6 @@ class FeatureReconstructor(BaseModel):
         anomaly_score = torch.stack(anomaly_score)
         return anomaly_map, anomaly_score
 
-    def load(self, path: str):
-        self.load_state_dict(torch.load(path))
-
-    def save(self, path: str):
-        torch.save(self.state_dict(), path)
-
 
 class FeatureVAE(BaseModel):
     def __init__(self, config):
@@ -339,12 +341,6 @@ class EnsembleFAE(BaseModel):
         anomaly_score = torch.tensor([m[x_ > 0].mean() for m, x_ in zip(anomaly_map, x)])
 
         return anomaly_map, anomaly_score
-
-    def load(self, path: str):
-        self.load_state_dict(torch.load(path))
-
-    def save(self, path: str):
-        torch.save(self.state_dict(), path)
 
 
 if __name__ == '__main__':

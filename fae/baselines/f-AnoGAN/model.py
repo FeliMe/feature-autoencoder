@@ -1,6 +1,7 @@
 '''
 https://github.com/dbbbbm/f-AnoGAN-PyTorch
 '''
+import os
 from functools import partial
 from typing import Tuple
 
@@ -8,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+import wandb
 
 
 DIM = 64
@@ -308,6 +310,19 @@ class fAnoGAN(nn.Module):
 
         return anomaly_map, anomaly_score, x_rec
 
+    def load(self, path: str):
+        """
+        Load model from W&B
+        :param path: Path to the model <entity>/<project>/<run_id>/<model_name>
+        """
+        name = os.path.basename(path)
+        run_path = os.path.dirname(path)
+        weights = wandb.restore(name, run_path=run_path)
+        self.load_state_dict(torch.load(weights.name))
+
+    def save(self, name: str):
+        torch.save(self.state_dict(), os.path.join(wandb.run.dir, name))
+
 
 if __name__ == '__main__':
     # Config
@@ -331,4 +346,3 @@ if __name__ == '__main__':
     # d_out, d_feats = model.D(x_gen)
     # z_gen = model.E(x_gen)
     # print(x_gen.shape, d_out.shape, d_feats.shape, z_gen.shape)
-    import IPython ; IPython.embed() ; exit(1)

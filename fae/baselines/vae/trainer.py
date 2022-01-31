@@ -1,25 +1,16 @@
-# Add the parent directory to sys.path to allow importing from there
-import os
-import sys
-this_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(this_dir))
-
 from argparse import ArgumentParser
 from collections import defaultdict
-from datetime import datetime
+from os.path import dirname
 from time import time
 
 import numpy as np
 import torch
+import wandb
 
 from model import VAE
-from datasets import get_dataloaders
-from utils import (
-    seed_everything,
-    compute_auroc,
-    compute_average_precision,
-    TensorboardLogger
-)
+from fae.data.datasets import get_dataloaders
+from fae.utils.utils import seed_everything
+from fae.utils.evaluation import compute_auroc, compute_average_precision
 
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
@@ -28,8 +19,12 @@ parser = ArgumentParser()
 # General script settings
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--debug', action='store_true', help='Debug mode')
+parser.add_argument('--resume_path', type=str, help='W&B path to checkpoint to resume training from')
 
 # Data settings
+parser.add_argument('--train_dataset', type=str, default='camcan', help='Training dataset name')
+parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
+                    choices=['brats', 'mslub', 'msseg', 'wmh'])
 parser.add_argument('--image_size', type=int, default=128, help='Image size')
 parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
 parser.add_argument('--slice_range', type=int, nargs='+', default=(55, 135), help='Lower and Upper slice index')
@@ -41,11 +36,8 @@ parser.add_argument('--num_workers', type=int, default=4, help='Number of worker
 parser.add_argument('--val_frequency', type=int, default=200, help='Validation frequency')
 parser.add_argument('--val_steps', type=int, default=50, help='Steps per validation')
 parser.add_argument('--log_frequency', type=int, default=50, help='Logging frequency')
+parser.add_argument('--save_frequency', type=int, default=200, help='Model checkpointing frequency')
 parser.add_argument('--num_images_log', type=int, default=10, help='Number of images to log')
-parser.add_argument(
-    '--log_dir', type=str, help="Logging directory",
-    default=os.path.join(this_dir, 'logs', datetime.strftime(datetime.now(), format="%Y.%m.%d-%H:%M:%S"))
-)
 
 # Hyperparameters
 parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
@@ -59,10 +51,15 @@ parser.add_argument('--hidden_dims', type=int, nargs='+', default=[32, 64, 128, 
 parser.add_argument('--latent_dim', type=int, default=128, help='Size of the latent space')
 parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate')
 
-config = parser.parse_args()
+args = parser.parse_args()
 
 # Select training device
-config.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
+           mode="disabled" if args.debug else "online",
+           dir=dirname(dirname(dirname(__file__))))
+config = wandb.config
 
 
 """"""""""""""""""""""""""""""" Reproducability """""""""""""""""""""""""""""""
@@ -74,12 +71,18 @@ seed_everything(config.seed)
 
 print("Initializing model...")
 model = VAE(config).to(config.device)
+wandb.watch(model)
+
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                              weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
 # Print model
 print(model.encoder)
 print(model.decoder)
+
+if config.resume_path is not None:
+    print("Loading model from checkpoint...")
+    model.load(config.resume_path)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -92,7 +95,6 @@ print(f'Loaded datasets in {time() - t_load_data_start:.2f}s')
 
 
 """"""""""""""""""""""""""""""""""" Training """""""""""""""""""""""""""""""""""
-writer = TensorboardLogger(config.log_dir, config=config, flush_secs=10)
 
 
 def train_step(model, optimizer, x, device):
@@ -159,17 +161,17 @@ def validate(model, val_loader, device, i_iter):
     print(log_msg)
 
     # Log to tensorboard
-    writer.log({
+    wandb.log({
         f'val/{k}': np.mean(v) for k, v in val_losses.items()
     }, step=i_iter)
-    writer.log({
+    wandb.log({
         'val/pixel-ap': np.mean(pixel_aps),
         'val/sample-ap': np.mean(sample_ap),
         'val/sample-auroc': np.mean(sample_auroc),
-        'val/input images': x.cpu()[:config.num_images_log],
-        'val/reconstructed images': rec.cpu()[:config.num_images_log],
-        'val/targets': y.float().cpu()[:config.num_images_log],
-        'val/anomaly maps': anomaly_map.cpu()[:config.num_images_log]
+        'val/input images': wandb.Image(x.cpu()[:config.num_images_log]),
+        'val/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
+        'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
+        'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log])
     }, step=i_iter)
 
 
@@ -201,16 +203,20 @@ def train(model, optimizer, train_loader, val_loader, config):
                 x = x.cpu().detach()
                 rec = rec.cpu().detach()
                 log_dict = {f'train/{k}': np.mean(v) for k, v in train_losses.items()}
-                log_dict['train/input images'] = x[:config.num_images_log]
-                log_dict['train/reconstructed images'] = rec[:config.num_images_log]
-                log_dict['train/anomaly maps'] = (x - rec).abs()[:config.num_images_log]
-                writer.log(log_dict, step=i_iter)
+                log_dict['train/input images'] = wandb.Image(x[:config.num_images_log])
+                log_dict['train/reconstructed images'] = wandb.Image(rec[:config.num_images_log])
+                log_dict['train/anomaly maps'] = wandb.Image((x - rec).abs()[:config.num_images_log])
+                wandb.log(log_dict, step=i_iter)
 
                 # Reset
                 train_losses = defaultdict(list)
 
             if i_iter % config.val_frequency == 0:
                 validate(model, val_loader, config.device, i_iter)
+
+            # Save model weights
+            if i_iter % config.save_frequency == 0:
+                model.save('last.pt')
 
             if i_iter >= config.max_steps:
                 print(f'Reached {config.max_steps} iterations. Finished training.')

@@ -5,7 +5,7 @@ base_parser = ArgumentParser(add_help=False)
 # General script settings
 base_parser.add_argument('--seed', type=int, default=42, help='Random seed')
 base_parser.add_argument('--debug', action='store_true', help='Debug mode')
-base_parser.add_argument('--resume', action='store_true', help='Debug mode')  # TODO: implement
+base_parser.add_argument('--resume_path', type=str, help='W&B path to checkpoint to resume training from')
 
 # Data settings
 base_parser.add_argument('--train_dataset', type=str, default='camcan', help='Training dataset name')

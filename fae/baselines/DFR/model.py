@@ -1,8 +1,10 @@
+import os
 from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import wandb
 
 from torch import Tensor
 from torchvision import models as tv_models
@@ -309,6 +311,19 @@ class FeatureAE(nn.Module):
         # Loss from map small
         loss = map_small.mean()
         return anomaly_map, anomaly_score, loss
+
+    def load(self, path: str):
+        """
+        Load model from W&B
+        :param path: Path to the model <entity>/<project>/<run_id>/<model_name>
+        """
+        name = os.path.basename(path)
+        run_path = os.path.dirname(path)
+        weights = wandb.restore(name, run_path=run_path)
+        self.load_state_dict(torch.load(weights.name))
+
+    def save(self, name: str):
+        torch.save(self.state_dict(), os.path.join(wandb.run.dir, name))
 
 
 if __name__ == '__main__':

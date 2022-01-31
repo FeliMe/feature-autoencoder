@@ -51,6 +51,7 @@ print("Initializing model...")
 model = get_model(config).to(config.device)
 # Track model with w&b
 wandb.watch(model)
+
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                              weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
@@ -58,6 +59,10 @@ optimizer = SWA(optimizer, 7500, 250, config.lr * 0.5)
 # Print model
 print(model.ae.enc)
 print(model.ae.dec)
+
+if config.resume_path is not None:
+    print("Loading model from checkpoint...")
+    model.load(config.resume_path)
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -182,6 +187,10 @@ def train(model, optimizer, train_loader, val_loader, config):
 
             if i_iter % config.val_frequency == 0:
                 validate(model, val_loader, config.device, i_iter)
+
+            # Save model weights
+            if i_iter % config.save_frequency == 0:
+                model.save('last.pt')
 
             if i_iter >= config.max_steps:
                 print(f'Reached {config.max_steps} iterations. Finished training.')

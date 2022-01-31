@@ -1,9 +1,11 @@
+import os
 from argparse import Namespace
 from typing import List
 
 import torch
 import torch.nn as nn
 from torch import Tensor
+import wandb
 
 from fae.utils.pytorch_ssim import SSIMLoss
 
@@ -130,18 +132,6 @@ class AE(nn.Module):
         else:
             raise ValueError("Unknown loss function")
 
-    def save(self, path: str):
-        """
-        Save the model
-        """
-        torch.save(self.state_dict(), path)
-
-    def load(self, path: str):
-        """
-        Load a model
-        """
-        self.load_state_dict(torch.load(path))
-
     def loss(self, inp: Tensor, rec: Tensor) -> Tensor:
         """
         :param inp: Input image
@@ -174,6 +164,19 @@ class AE(nn.Module):
         # Decode
         rec = self.decoder(decoder_inp)
         return rec
+
+    def load(self, path: str):
+        """
+        Load model from W&B
+        :param path: Path to the model <entity>/<project>/<run_id>/<model_name>
+        """
+        name = os.path.basename(path)
+        run_path = os.path.dirname(path)
+        weights = wandb.restore(name, run_path=run_path)
+        self.load_state_dict(torch.load(weights.name))
+
+    def save(self, name: str):
+        torch.save(self.state_dict(), os.path.join(wandb.run.dir, name))
 
 
 if __name__ == '__main__':

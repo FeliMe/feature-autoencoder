@@ -11,7 +11,7 @@ __pycache__/
 .vscode/
 
 # w&b files and directories
-/fae/wandb/
+wandb/
 
 # Tester file
 /fae/tester.py
