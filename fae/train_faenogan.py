@@ -1,6 +1,6 @@
+
 from argparse import ArgumentParser
 from collections import defaultdict
-from os.path import dirname
 from time import time
 
 import numpy as np
@@ -9,12 +9,12 @@ import torch.nn.functional as F
 from torchsummary import summary
 import wandb
 
-from model import fAnoGAN
+from fae.models.feature_extractor import Extractor
+from fae.models.gan_models import fAnoGAN
 from fae.data.datasets import get_dataloaders
 from fae.utils.pytorch_ssim import SSIMLoss
-from fae.utils.utils import seed_everything
+from fae.utils.utils import seed_everything, calc_gradient_penalty
 from fae.utils.evaluation import compute_auroc, compute_average_precision
-from fanogan_utils import calc_gradient_penalty
 
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
@@ -29,7 +29,8 @@ parser.add_argument('--resume_path', type=str,
 # Data settings
 parser.add_argument('--train_dataset', type=str,
                     default='camcan', help='Training dataset name')
-parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
+parser.add_argument('--test_dataset', type=str, default='brats',
+                    help='Test dataset name',
                     choices=['brats', 'mslub', 'msseg', 'wmh'])
 parser.add_argument('--image_size', type=int, default=128, help='Image size')
 parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
@@ -55,7 +56,8 @@ parser.add_argument('--num_images_log', type=int,
                     default=10, help='Number of images to log')
 
 # Hyperparameters
-parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
+parser.add_argument('--lr_g', type=float, default=2e-4,
+                    help='Generator learning rate')
 parser.add_argument('--lr_d', type=float, default=2e-4,
                     help='Discriminator learning rate')
 parser.add_argument('--lr_e', type=float, default=5e-5,
@@ -73,12 +75,21 @@ parser.add_argument('--max_steps_encoder', type=int,
 parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
 
 # Model settings
-parser.add_argument('--dim', type=int, default=64, help='Model width')
 parser.add_argument('--latent_dim', type=int, default=128,
                     help='Size of the latent space')
+parser.add_argument('--generator_hidden_dims', type=int, nargs='+',
+                    default=[300, 200, 150, 100],
+                    # default=[512, 512, 256, 128],
+                    help='Generator hidden dimensions')
+parser.add_argument('--discriminator_hidden_dims', type=int, nargs='+',
+                    default=[100, 150, 200, 300],
+                    # default=[128, 256, 512, 512],
+                    help='Discriminator hidden dimensions')
 parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate')
-parser.add_argument('--loss_fn', type=str, default='l1', help='loss function',
-                    choices=['l1', 'mse', 'ssim'])
+parser.add_argument('--extractor_cnn_layers', type=str,
+                    nargs='+', default=['layer1', 'layer2'])
+parser.add_argument('--keep_feature_prop', type=float,
+                    default=1.0, help='Proportion of ResNet features to keep')
 
 args = parser.parse_args()
 
@@ -86,8 +97,7 @@ args = parser.parse_args()
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
-           mode="disabled" if args.debug else "online",
-           dir=dirname(dirname(dirname(__file__))), )
+           mode="disabled" if args.debug else "online")
 config = wandb.config
 
 
@@ -99,11 +109,16 @@ seed_everything(config.seed)
 
 
 print("Initializing models...")
+extractor = Extractor(cnn_layers=config.extractor_cnn_layers,
+                      inp_size=config.image_size,
+                      keep_feature_prop=config.keep_feature_prop).to(config.device)
+extractor.eval()
+config.feat_channels = extractor.c_feats
 model = fAnoGAN(config).to(config.device)
 wandb.watch(model)
 
 # Init optimizers
-optimizer_g = torch.optim.Adam(model.G.parameters(), lr=config.lr, betas=(0., 0.9),
+optimizer_g = torch.optim.Adam(model.G.parameters(), lr=config.lr_g, betas=(0., 0.9),
                                weight_decay=config.weight_decay)
 optimizer_d = torch.optim.Adam(model.D.parameters(), lr=config.lr_d, betas=(0., 0.9),
                                weight_decay=config.weight_decay)
@@ -114,9 +129,9 @@ optimizer_e = torch.optim.Adam(model.E.parameters(), lr=config.lr_e, betas=(0., 
 print("Generator:")
 summary(model.G, (config.latent_dim,))
 print("\nDiscriminator:")
-summary(model.D, (1, config.image_size, config.image_size))
+summary(model.D, (config.feat_channels, *[config.image_size // 4] * 2))
 print("\nEncoder:")
-summary(model.E, (1, config.image_size, config.image_size))
+summary(model.E, (config.feat_channels, *[config.image_size // 4] * 2))
 
 if config.resume_path is not None:
     print("Loading model from checkpoint...")
@@ -186,7 +201,7 @@ def train_step_gan(model, optimizer_g, optimizer_d, x_real):
     }, x_fake
 
 
-def train_gan(model, optimizer_g, optimizer_d, train_loader, config):
+def train_gan(model, extractor, optimizer_g, optimizer_d, train_loader, config):
     print('Starting training GAN...')
     i_iter = 0
     i_epoch = 0
@@ -195,11 +210,11 @@ def train_gan(model, optimizer_g, optimizer_d, train_loader, config):
 
     t_start = time()
     while True:
-        for x_real in train_loader:
+        for img_real in train_loader:
             i_iter += 1
-            x_real = x_real.to(config.device)
-            loss_dict, x_fake = train_step_gan(
-                model, optimizer_g, optimizer_d, x_real)
+            x_real = extractor(img_real.to(config.device))
+            loss_dict, x_fake = train_step_gan(model, optimizer_g, optimizer_d,
+                                               x_real)
 
             # Add to losses
             for k, v in loss_dict.items():
@@ -208,22 +223,20 @@ def train_gan(model, optimizer_g, optimizer_d, train_loader, config):
             if i_iter % config.log_frequency == 0:
                 # Print training loss
                 log_msg = " - ".join([f'{k}: {np.mean(v):.4f}' for k,
-                                     v in train_losses.items()])
+                                      v in train_losses.items()])
                 log_msg = f"Iteration {i_iter} - " + log_msg
                 log_msg += f" - time: {time() - t_start:.2f}s"
                 print(log_msg)
 
                 # Log to tensorboard
-                x_real = x_real.cpu().detach()
-                x_fake = x_fake.cpu().detach()
                 wandb.log(
                     {f'train/{k}': np.mean(v)
                      for k, v in train_losses.items()},
                     step=i_iter
                 )
                 wandb.log({
-                    'train/GAN real images': wandb.Image(x_real.cpu()[:config.num_images_log]),
-                    'train/GAN fake images': wandb.Image(x_fake.cpu()[:config.num_images_log]),
+                    'train/GAN real images': wandb.Image(x_real.cpu()[:config.num_images_log].mean(1, keepdim=True)),
+                    'train/GAN fake images': wandb.Image(x_fake.cpu()[:config.num_images_log].mean(1, keepdim=True)),
                 }, step=i_iter)
 
                 # Reset
@@ -271,7 +284,7 @@ def train_step_encoder(model, optimizer_e, x, config):
     }, x_rec
 
 
-def train_encoder(model, optimizer_e, train_loader, test_loader, config):
+def train_encoder(model, extractor, optimizer_e, train_loader, test_loader, config):
     print('Starting training Encoder...')
     i_iter = 0
     i_epoch = 0
@@ -284,9 +297,9 @@ def train_encoder(model, optimizer_e, train_loader, test_loader, config):
 
     t_start = time()
     while True:
-        for x in train_loader:
+        for img in train_loader:
             i_iter += 1
-            x = x.to(config.device)
+            x = extractor(img.to(config.device))
             loss_dict, x_rec = train_step_encoder(
                 model, optimizer_e, x, config)
 
@@ -297,7 +310,7 @@ def train_encoder(model, optimizer_e, train_loader, test_loader, config):
             if i_iter % config.log_frequency == 0:
                 # Print training loss
                 log_msg = " - ".join([f'{k}: {np.mean(v):.4f}' for k,
-                                     v in train_losses.items()])
+                                      v in train_losses.items()])
                 log_msg = f"Iteration {i_iter} - " + log_msg
                 log_msg += f" - time: {time() - t_start:.2f}s"
                 print(log_msg)
@@ -311,15 +324,15 @@ def train_encoder(model, optimizer_e, train_loader, test_loader, config):
                     step=i_iter
                 )
                 wandb.log({
-                    'train/input images': wandb.Image(x.cpu()[:config.num_images_log]),
-                    'train/reconstructed images': wandb.Image(x_rec.cpu()[:config.num_images_log]),
+                    'train/input images': wandb.Image(x.cpu()[:config.num_images_log].mean(1, keepdim=True)),
+                    'train/reconstructed images': wandb.Image(x_rec.cpu()[:config.num_images_log].mean(1, keepdim=True)),
                 }, step=i_iter)
 
                 # Reset
                 train_losses = defaultdict(list)
 
             if i_iter % config.val_frequency == 0:
-                validate_encoder(model, test_loader, i_iter, config)
+                validate_encoder(model, extractor, test_loader, i_iter, config)
 
             # Save model weights
             if i_iter % config.save_frequency == 0:
@@ -334,9 +347,10 @@ def train_encoder(model, optimizer_e, train_loader, test_loader, config):
         print(f'Finished epoch {i_epoch}, ({i_iter} iterations)')
 
 
-def val_step_encoder(model, x, config):
+def val_step_encoder(model, extractor, img, config):
     model.eval()
     with torch.no_grad():
+        x = extractor(img.to(config.device))
         z = model.E(x)  # encode image
         x_rec = model.G(z)  # decode latent vector
         x_feats = model.D.extract_feature(x)  # get features from real image
@@ -359,32 +373,34 @@ def val_step_encoder(model, x, config):
         # anomaly_map = (x - x_rec).abs().mean(1, keepdim=True)
         anomaly_map = SSIMLoss(size_average=False)(
             x_rec, x).mean(1, keepdim=True)
+        anomaly_map = F.interpolate(anomaly_map, img.shape[-2:], mode='bilinear',
+                                    align_corners=True)
 
         # Anomaly score
         # img_diff = (x - x_rec).pow(2).mean((1, 2, 3))
         img_diff = []
-        for i in range(x.shape[0]):
-            roi = anomaly_map[i][x[i] > 0]
+        for i in range(img.shape[0]):
+            roi = anomaly_map[i][img[i] > 0]
             img_diff.append(roi.mean())
+        img_diff = torch.stack(img_diff)
         feat_diff = (x_feats - x_rec_feats).pow(2).mean((1))
         anomaly_score = img_diff + config.feat_weight * feat_diff
 
-    return loss_dict, anomaly_map.cpu(), anomaly_score.cpu(), x_rec.cpu()
+    return loss_dict, anomaly_map.cpu(), anomaly_score.cpu(), x.cpu(), x_rec.cpu()
 
 
-def validate_encoder(model, test_loader, i_iter, config):
+def validate_encoder(model, extractor, test_loader, i_iter, config):
     val_losses = defaultdict(list)
     pixel_aps = []
     labels = []
     anomaly_scores = []
     i_val_step = 0
 
-    for x, y, label in test_loader:
+    for img, y, label in test_loader:
         # x, y, anomaly_map: [b, 1, h, w]
-        x = x.to(config.device)
         # Compute loss, anomaly map and anomaly score
-        loss_dict, anomaly_map, anomaly_score, rec = val_step_encoder(
-            model, x, config)
+        loss_dict, anomaly_map, anomaly_score, x, x_rec = val_step_encoder(
+            model, extractor, img, config)
 
         # Compute metrics
         pixel_ap = compute_average_precision(anomaly_map, y)
@@ -408,7 +424,7 @@ def validate_encoder(model, test_loader, i_iter, config):
     # Print validation results
     print("\nValidation results:")
     log_msg = " - ".join([f'val {k}: {np.mean(v):.4f}' for k,
-                         v in val_losses.items()])
+                          v in val_losses.items()])
     log_msg += f"\npixel-wise average precision: {np.mean(pixel_aps):.4f}\n"
     log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
     log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
@@ -423,14 +439,15 @@ def validate_encoder(model, test_loader, i_iter, config):
         'val/pixel-ap': np.mean(pixel_aps),
         'val/sample-ap': np.mean(sample_ap),
         'val/sample-auroc': np.mean(sample_auroc),
-        'val/input images': wandb.Image(x.cpu()[:config.num_images_log]),
-        'val/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
+        'val/input images': wandb.Image(x.cpu()[:config.num_images_log].mean(1, keepdim=True)),
+        'val/reconstructed images': wandb.Image(x_rec.cpu()[:config.num_images_log].mean(1, keepdim=True)),
         'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
         'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log]),
     }, step=i_iter)
 
 
 if __name__ == '__main__':
-    train_gan(model, optimizer_g, optimizer_d, train_loader, config)
-    train_encoder(model, optimizer_e, train_loader, test_loader, config)
+    # train_gan(model, extractor, optimizer_g, optimizer_d, train_loader, config)
+    train_encoder(model, extractor, optimizer_e,
+                  train_loader, test_loader, config)
     # validate_encoder(model, test_loader, config.max_steps_encoder + 1, config):

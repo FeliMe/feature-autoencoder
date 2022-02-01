@@ -42,9 +42,11 @@ def mahalanobis_distance_image(x: Tensor, y: Tensor) -> Tensor:
 
     # Compute the inverse covariance matrix of y
     y_center = y - mu[..., None]  # (h*w, c, n)
-    cov = torch.bmm(y_center, y_center.permute(0, 2, 1)) / (n - 1)  # (h*w, c, c)
+    cov = torch.bmm(y_center, y_center.permute(0, 2, 1)) / \
+        (n - 1)  # (h*w, c, c)
     # Add a small number to the diagonal to avoid numerical instability when inverting
-    cov += torch.eye(c, c, device=cov.device)[None].repeat(d, 1, 1) * 0.01  # 1e-5
+    # 1e-5
+    cov += torch.eye(c, c, device=cov.device)[None].repeat(d, 1, 1) * 0.01
     cov_inv = torch.inverse(cov)  # (h*w, c, c)
 
     # Compute the mahalanobis distance
@@ -89,10 +91,45 @@ class PerceptualLoss(torch.nn.Module):
         return F.mse_loss(feats_pred, feats_target, reduction='none')
 
 
+def calc_gradient_penalty(D: nn.Module, x_real: Tensor, x_fake: Tensor) -> Tensor:
+    """
+    Calculate the gradient penalty loss for WGAN-GP.
+    Gradient norm for an interpolated version of x_real and x_fake.
+    See https://arxiv.org/abs/1704.00028
+
+    :param D: Discriminator
+    :param x_real: Real images
+    :param x_fake: Fake images
+    """
+
+    # Useful variables
+    device = x_real.device
+    b = x_real.size(0)
+
+    # Interpolate images
+    alpha = torch.rand(b, 1, 1, 1, device=device)
+    interp = alpha * x_real.detach() + ((1 - alpha) * x_fake.detach())
+    interp.requires_grad = True
+
+    # Forward discrminator
+    d_out, _ = D(interp)
+
+    # Calculate gradients
+    grads = torch.autograd.grad(outputs=d_out, inputs=interp,
+                                grad_outputs=torch.ones_like(d_out),
+                                create_graph=True)[0]
+    grads = grads.view(b, -1)
+    gp = ((grads.norm(2, dim=1) - 1) ** 2).mean()
+
+    return gp
+
+
 def r1_gradient_penalty(pred_real, real_batch):
     if torch.is_grad_enabled():
-        grad_real = torch.autograd.grad(outputs=pred_real.sum(), inputs=real_batch, create_graph=True)[0]
-        grad_penalty = (grad_real.view(grad_real.shape[0], -1).norm(2, dim=1) ** 2).mean()
+        grad_real = torch.autograd.grad(
+            outputs=pred_real.sum(), inputs=real_batch, create_graph=True)[0]
+        grad_penalty = (grad_real.view(
+            grad_real.shape[0], -1).norm(2, dim=1) ** 2).mean()
     else:
         grad_penalty = torch.tensor(0.)
     real_batch.requires_grad = False
@@ -116,7 +153,8 @@ class GANNonSaturatingWithR1:
 
         loss_real = F.softplus(-pred_real)
         loss_fake = F.softplus(pred_fake)
-        grad_penalty = r1_gradient_penalty(pred_real, real_batch) * self.gp_coef
+        grad_penalty = r1_gradient_penalty(
+            pred_real, real_batch) * self.gp_coef
 
         adv_loss_d = (loss_real + loss_fake) / 2. + grad_penalty
         metrics = dict(

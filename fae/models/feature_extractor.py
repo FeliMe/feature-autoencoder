@@ -63,11 +63,12 @@ class Extractor(nn.Module):
     """
     Muti-scale regional feature based on VGG-feature maps.
     """
+
     def __init__(
         self,
-        cnn_layers=['layer1', 'layer2', 'layer3'],
+        cnn_layers=['layer1', 'layer2'],
         upsample='bilinear',
-        inp_size=256,
+        inp_size=128,
         keep_feature_prop=1.0,
     ):
         super().__init__()
@@ -82,7 +83,8 @@ class Extractor(nn.Module):
         c_feats = self.get_out_channels()
 
         # Create mask to drop random features_channels
-        self.register_buffer('feature_mask', torch.Tensor(c_feats).uniform_() < keep_feature_prop)
+        self.register_buffer('feature_mask', torch.Tensor(
+            c_feats).uniform_() < keep_feature_prop)
         self.c_feats = self.feature_mask.sum().item()
 
     def get_out_channels(self):
@@ -117,9 +119,9 @@ class Extractor(nn.Module):
 if __name__ == '__main__':
     from argparse import Namespace
     config = Namespace()
-    config.inp_size = 256
-    config.keep_feature_prop = 0.8
-    config.cnn_layers = ['layer1', 'layer2', 'layer3']
+    config.inp_size = 128
+    config.keep_feature_prop = 1.
+    config.cnn_layers = ['layer1', 'layer2']
     device = "cpu"
 
     extractor = Extractor(**vars(config)).to(device)

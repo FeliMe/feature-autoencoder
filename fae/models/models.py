@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
@@ -215,7 +215,7 @@ class FeatureDiscriminator(nn.Module):
         self.enc = vanilla_feature_encoder(
             config.in_channels,
             hidden_dims=config.discriminator_hidden_dims,
-            norm_layer="nn.BatchNorm2d",
+            norm_layer="nn.InstanceNorm2d",
             dropout=0.0, bias=False
         )
         self.enc.add_module("conv_out",
@@ -239,7 +239,9 @@ if __name__ == '__main__':
     from argparse import Namespace
     config = Namespace()
     config.image_size = 128
-    config.hidden_dims = [400, 450, 500, 600]
+    config.hidden_dims = [100, 150, 200, 300]
+    config.generator_hidden_dims = [300, 200, 150, 100]
+    config.discriminator_hidden_dims = [100, 150, 200, 300]
     config.dropout = 0.2
     config.extractor_cnn_layers = ['layer1', 'layer2']
     config.keep_feature_prop = 1.0
@@ -255,10 +257,10 @@ if __name__ == '__main__':
     x = torch.randn(32, 1, *[config.image_size] * 2).to(device)
 
     # Forward
-    from time import perf_counter
-    t_start = perf_counter()
     feats, rec = fae(x)
     print(feats.shape, rec.shape)
     # anomaly_map, anomaly_score = fae.predict_anomaly(x)
     # loss = fae.loss(x)
-    print(f"{perf_counter() - t_start:.2f}s")
+
+    G = FeatureGenerator(config).to(device)
+    D = FeatureDiscriminator(config).to(device)

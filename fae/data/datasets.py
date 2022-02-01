@@ -52,7 +52,8 @@ def get_brats_files(path: str = BRATSROOT, sequence: str = "t1") -> Tuple[List[s
     """
     files = glob(os.path.join(path, 'MICCAI_BraTS2020_TrainingData/*',
                               f'*{sequence.lower()}*registered.nii.gz'))
-    seg_files = [os.path.join(os.path.dirname(f), 'anomaly_segmentation.nii.gz') for f in files]
+    seg_files = [os.path.join(os.path.dirname(
+        f), 'anomaly_segmentation.nii.gz') for f in files]
     assert len(files) > 0, "No files found in BraTS"
     return files, seg_files
 
@@ -70,7 +71,8 @@ def get_mslub_files(path: str = MSLUBROOT, sequence: str = "t1") -> Tuple[List[s
         sequence += 'w'
     files = glob(os.path.join(path, 'lesion/*',
                               f'{sequence.upper()}*stripped_registered.nii.gz'))
-    seg_files = [os.path.join(os.path.dirname(f), 'anomaly_segmentation.nii.gz') for f in files]
+    seg_files = [os.path.join(os.path.dirname(
+        f), 'anomaly_segmentation.nii.gz') for f in files]
     assert len(files) > 0, "No files found in MSLUB"
     return files, seg_files
 
@@ -86,7 +88,8 @@ def get_msseg_files(path: str = MSSEGROOT, sequence: str = "t2") -> Tuple[List[s
     """
     files = glob(os.path.join(path, 'training/training*/training*/',
                               f'{sequence.lower()}*registered.nii'))
-    seg_files = [os.path.join(os.path.dirname(f), 'anomaly_segmentation.nii.gz') for f in files]
+    seg_files = [os.path.join(os.path.dirname(
+        f), 'anomaly_segmentation.nii.gz') for f in files]
     assert len(files) > 0, "No files found in MSSEG2015"
     return files, seg_files
 
@@ -102,7 +105,8 @@ def get_wmh_files(path: str = WMHROOT, sequence: str = "t1") -> Tuple[List[str],
     """
     files = glob(os.path.join(path, '*/*/orig/',
                               f'{sequence.upper()}*stripped_registered.nii.gz'))
-    seg_files = [os.path.join(os.path.dirname(f), 'anomaly_segmentation.nii.gz') for f in files]
+    seg_files = [os.path.join(os.path.dirname(
+        f), 'anomaly_segmentation.nii.gz') for f in files]
     assert len(files) > 0, "No files found in WMH"
     return files, seg_files
 
@@ -160,6 +164,7 @@ class ValidationDataset(Dataset):
     """
     Validation dataset. With artificial anomalies.
     """
+
     def __init__(self, imgs: np.ndarray, anomaly_size: Tuple[int, int]):
         super().__init__()
         self.imgs = imgs
@@ -183,6 +188,7 @@ class TestDataset(Dataset):
     """
     Test dataset. With real anomalies.
     """
+
     def __init__(self, imgs: np.ndarray, segs: np.ndarray):
         super().__init__()
         self.imgs = imgs
@@ -192,9 +198,9 @@ class TestDataset(Dataset):
         return len(self.imgs)
 
     def __getitem__(self, idx):
-        img = self.imgs[idx]
-        seg = self.segs[idx]
-        label = np.where(seg.sum(dim=(1, 2, 3)) > 0, 1, 0)
+        img = self.imgs[idx]  # (c, h, w)
+        seg = self.segs[idx]  # (1, h, w)
+        label = np.where(seg.sum(axis=(1, 2)) > 0, 1, 0)  # (1,)
         return img, seg, label
 
 
@@ -208,7 +214,8 @@ def get_dataloaders(config):
     """
     def get_files(ds_name, sequence):
         if f"get_{ds_name}_files" in sys.modules[__name__].__dict__:
-            get_files_fn = sys.modules[__name__].__dict__[f"get_{ds_name}_files"]
+            get_files_fn = sys.modules[__name__].__dict__[
+                f"get_{ds_name}_files"]
         else:
             raise ValueError(f'Dataset {ds_name} not found')
 
@@ -216,7 +223,8 @@ def get_dataloaders(config):
 
     train_files = get_files(config.train_dataset, config.sequence)
     # train_files, val_files = train_val_split(train_files, config.val_split)
-    test_files, test_seg_files = get_files(config.test_dataset, config.sequence)
+    test_files, test_seg_files = get_files(
+        config.test_dataset, config.sequence)
 
     # train_files = train_files[:10]
     # test_files = test_files[:5]
@@ -290,7 +298,8 @@ if __name__ == "__main__":
 
     # Test test dataset
     imgs = np.concatenate(load_images(brats_files[:10], config))[:, None]
-    segs = np.concatenate(load_segmentations(brats_seg_files[:10], config))[:, None]
+    segs = np.concatenate(load_segmentations(
+        brats_seg_files[:10], config))[:, None]
     test_ds = TestDataset(imgs[40:], segs[40:])
     test_loader = DataLoader(test_ds, batch_size=config.batch_size)
     x, y = next(iter(test_loader))
