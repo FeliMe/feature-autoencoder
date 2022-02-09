@@ -92,6 +92,7 @@ class VAE(nn.Module):
     A n-layer variational autoencoder
     adapted from: https://github.com/AntixK/PyTorch-VAE/blob/master/models/vanilla_vae.py
     """
+
     def __init__(self, config):
         super().__init__()
 
@@ -103,7 +104,8 @@ class VAE(nn.Module):
         dropout = config.dropout if "dropout" in config else 0.0
 
         intermediate_res = image_size // 2 ** len(hidden_dims)
-        intermediate_feats = intermediate_res * intermediate_res * hidden_dims[-1]
+        intermediate_feats = intermediate_res * \
+            intermediate_res * hidden_dims[-1]
 
         # Build encoder
         self.encoder = build_encoder(1, hidden_dims, use_batchnorm, dropout)
@@ -120,18 +122,6 @@ class VAE(nn.Module):
 
         # Build decoder
         self.decoder = build_decoder(1, hidden_dims, use_batchnorm, dropout)
-
-    def save(self, path: str):
-        """
-        Save the model
-        """
-        torch.save(self.state_dict(), path)
-
-    def load(self, path: str):
-        """
-        Load a model
-        """
-        self.load_state_dict(torch.load(path))
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
         """
@@ -154,26 +144,33 @@ class VAE(nn.Module):
         :param logvar: Standard deviation of the estimated latent Gaussian
         :param kl_weight: Weight of the KL divergence
         """
-        recon_loss = torch.mean((inp - rec) ** 2)
+        rec_loss = torch.mean((inp - rec) ** 2)
         kl_loss = torch.mean(-0.5 * (1 + logvar - mu ** 2 - logvar.exp()))
-        loss = recon_loss + kl_weight * kl_loss
+        loss = rec_loss + kl_weight * kl_loss
         return {
             'loss': loss,
-            'recon_loss': recon_loss,
+            'rec_loss': rec_loss,
             'kl_loss': kl_loss,
         }
 
-    def predict_anomaly(self, inp: Tensor, rec: Tensor, mu: Tensor, logvar: Tensor):
+    def predict_anomaly(self, inp: Tensor):
         """
         Return anomaly map and anomaly score
         """
+        inp.requires_grad = True
+        rec, mu, logvar = self(inp)
+        loss_dict = self.loss_function(inp, rec, mu, logvar)
+
         # Anomaly map
-        anomaly_map = F.l1_loss(inp, rec, reduction='none').mean(1, keepdim=True)
+        anomaly_map = torch.autograd.grad(outputs=loss_dict['loss'], inputs=inp,
+                                          create_graph=True)[0]
+        inp.requires_grad = False
 
         # Anomaly score
-        anomaly_score = torch.mean(-0.5 * (1 + logvar - mu ** 2 - logvar.exp()), dim=1)
+        anomaly_score = torch.mean(-0.5 *
+                                   (1 + logvar - mu ** 2 - logvar.exp()), dim=1)
 
-        return anomaly_map, anomaly_score
+        return anomaly_map.detach(), anomaly_score.detach(), rec.detach(), loss_dict
 
     def forward(self, inp: Tensor) -> Tensor:
         # Encode
@@ -209,6 +206,4 @@ if __name__ == '__main__':
     net = VAE(config)
     print(net)
     x = torch.randn(2, 1, *[config.image_size] * 2)
-    with torch.no_grad():
-        rec, mu, logvar = net(x)
-    print(rec.shape, mu.shape, logvar.shape)
+    anomaly_map, anonaly_score, rec, loss_dict = net.predict_anomaly(x)

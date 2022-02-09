@@ -13,7 +13,7 @@ from model import fAnoGAN
 from fae.data.datasets import get_dataloaders
 from fae.utils.pytorch_ssim import SSIMLoss
 from fae.utils.utils import seed_everything
-from fae.utils.evaluation import compute_auroc, compute_average_precision
+from fae.utils import evaluation
 from fanogan_utils import calc_gradient_penalty
 
 
@@ -387,7 +387,7 @@ def validate_encoder(model, test_loader, i_iter, config):
             model, x, config)
 
         # Compute metrics
-        pixel_ap = compute_average_precision(anomaly_map, y)
+        pixel_ap = evaluation.compute_average_precision(anomaly_map, y)
 
         for k, v in loss_dict.items():
             val_losses[k].append(v)
@@ -402,8 +402,8 @@ def validate_encoder(model, test_loader, i_iter, config):
     # Compute sample-wise average precision and AUROC over all validation steps
     labels = torch.cat(labels)
     anomaly_scores = torch.cat(anomaly_scores)
-    sample_ap = compute_average_precision(anomaly_scores, labels)
-    sample_auroc = compute_auroc(anomaly_scores, labels)
+    sample_ap = evaluation.compute_average_precision(anomaly_scores, labels)
+    sample_auroc = evaluation.compute_auroc(anomaly_scores, labels)
 
     # Print validation results
     print("\nValidation results:")
@@ -430,7 +430,80 @@ def validate_encoder(model, test_loader, i_iter, config):
     }, step=i_iter)
 
 
+def test_encoder(model, test_loader, config):
+    val_losses = defaultdict(list)
+    labels = []
+    anomaly_scores = []
+    segs = []
+    anomaly_maps = []
+
+    for x, y, label in test_loader:
+        # x, y, anomaly_map: [b, 1, h, w]
+        x = x.to(config.device)
+        # Compute loss, anomaly map and anomaly score
+        loss_dict, anomaly_map, anomaly_score, rec = val_step_encoder(
+            model, x, config)
+
+        for k, v in loss_dict.items():
+            val_losses[k].append(v.item())
+        labels.append(label)
+        anomaly_scores.append(anomaly_score)
+
+        segs.append(y)
+        anomaly_maps.append(anomaly_map)
+
+    # Sample-wise metrics
+    labels = torch.cat(labels).numpy()
+    anomaly_scores = torch.cat(anomaly_scores).numpy()
+    sample_ap = evaluation.compute_average_precision(anomaly_scores, labels)
+    sample_auroc = evaluation.compute_auroc(anomaly_scores, labels)
+
+    # Pixel-wise metrics
+    anomaly_maps = torch.cat(anomaly_maps).numpy()
+    segs = torch.cat(segs).numpy()
+    pixel_ap = evaluation.compute_average_precision(anomaly_maps, segs)
+    pixel_auroc = evaluation.compute_auroc(anomaly_maps, segs)
+    iou_at_5fpr = evaluation.compute_iou_at_nfpr(anomaly_maps, segs,
+                                                 max_fpr=0.05)
+    dice_at_5fpr = evaluation.compute_dice_at_nfpr(anomaly_maps, segs,
+                                                   max_fpr=0.05)
+
+    # Print test results
+    print("\nTest results:")
+    log_msg = " - ".join([f'val {k}: {np.mean(v):.4f}' for k,
+                         v in val_losses.items()])
+    log_msg += f"\npixel-wise average precision: {pixel_ap:.4f} - "
+    log_msg += f"pixel-wise AUROC: {pixel_auroc:.4f}\n"
+    log_msg += f"IoU @ 5% fpr: {iou_at_5fpr:.4f} - "
+    log_msg += f"Dice @ 5% fpr: {dice_at_5fpr:.4f}\n"
+    log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
+    log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
+    log_msg += f"Average positive label: {torch.tensor(segs).float().mean():.4f}\n"
+    print(log_msg)
+
+    # Log to tensorboard
+    wandb.log({
+        f'val/{k}': np.mean(v) for k, v in val_losses.items()
+    }, step=config.max_steps + 1)
+    wandb.log({
+        'val/pixel-ap': pixel_ap,
+        'val/pixel-auroc': pixel_auroc,
+        'val/sample-ap': sample_ap,
+        'val/sample-auroc': sample_auroc,
+        'val/iou-at-5fpr': iou_at_5fpr,
+        'val/dice-at-5fpr': dice_at_5fpr,
+        'val/input images': wandb.Image(x.cpu()[:config.num_images_log]),
+        'val/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
+        'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
+        'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log]),
+    }, step=config.max_steps + 1)
+
+
 if __name__ == '__main__':
     train_gan(model, optimizer_g, optimizer_d, train_loader, config)
     train_encoder(model, optimizer_e, train_loader, test_loader, config)
     # validate_encoder(model, test_loader, config.max_steps_encoder + 1, config):
+
+    # Testing
+    print('Testing...')
+    test_encoder(model, test_loader, config)

@@ -12,7 +12,9 @@ from fae import (
     BRATSROOT,
     MSLUBROOT,
     MSSEGROOT,
-    WMHROOT
+    WMHROOT,
+    CHEXPERTROOT,
+    COLONOSCOPYROOT,
 )
 from fae.data.artificial_anomalies import (
     source_deformation_anomaly,
@@ -109,6 +111,18 @@ def get_wmh_files(path: str = WMHROOT, sequence: str = "t1") -> Tuple[List[str],
         f), 'anomaly_segmentation.nii.gz') for f in files]
     assert len(files) > 0, "No files found in WMH"
     return files, seg_files
+
+
+def get_chexpert_train_files(path: str = CHEXPERTROOT) -> Tuple[List[str], List[str]]:
+    """Get all CHEXPERT files.
+    Args:
+        path (str): Path to CHEXPERT root directory
+    Returns:
+        files (List[str]): List of files
+        seg_files (List[str]): List of segmentation files
+    """
+    files = glob(os.path.join(path, 'train/*/*/*.jpg'))
+    import IPython; IPython.embed(); exit(1)
 
 
 def load_images(files: List[str], config) -> np.ndarray:
@@ -264,6 +278,9 @@ if __name__ == "__main__":
     config.batch_size = 32
 
     # Test finding files
+    chexpert_train_files = get_chexpert_train_files()
+    print(len(chexpert_train_files))
+
     camcan_files = get_camcan_files(sequence='t1')
     print(len(camcan_files))
 

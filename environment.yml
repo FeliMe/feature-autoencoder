@@ -26,11 +26,9 @@ dependencies:
   - ipython>=7.18.1
   - tensorboard
   - neovim
-  pip:
+  - pip:
     - torchsummary
     - timm
     - wandb
-    NUMEXPR_MAX_THREADS: 64
 variables:
-  DATAROOT: /home/felix/datasets/
-prefix: ~/miniconda3/envs/anomaly_detection
+  DATAROOT: ~/datasets/

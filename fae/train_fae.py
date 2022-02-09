@@ -11,7 +11,7 @@ from fae.configs.base_config import base_parser
 from fae.data import datasets
 from fae.models import models
 from fae.utils.utils import seed_everything
-from fae.utils.evaluation import compute_average_precision, compute_auroc
+from fae.utils import evaluation
 
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
@@ -89,6 +89,64 @@ def train_step(model, optimizer, x, device):
     return loss_dict
 
 
+def train(model, optimizer, train_loader, val_loader, config):
+    print('Starting training...')
+    i_iter = 0
+    i_epoch = 0
+
+    train_losses = defaultdict(list)
+
+    t_start = time()
+    while True:
+        for x in train_loader:
+            i_iter += 1
+            loss_dict = train_step(model, optimizer, x, config.device)
+
+            # Add to losses
+            for k, v in loss_dict.items():
+                train_losses[k].append(v.item())
+
+            if i_iter % config.log_frequency == 0:
+                # Print training loss
+                log_msg = " - ".join([f'{k}: {np.mean(v):.4f}' for k,
+                                     v in train_losses.items()])
+                log_msg = f"Iteration {i_iter} - " + log_msg
+                log_msg += f" - time: {time() - t_start:.2f}s"
+                print(log_msg)
+
+                # Log to w&b
+                wandb.log({
+                    f'train/{k}': np.mean(v) for k, v in train_losses.items()
+                }, step=i_iter)
+
+                # Reset
+                train_losses = defaultdict(list)
+
+            if i_iter % config.val_frequency == 0:
+                validate(model, val_loader, config.device, i_iter)
+
+            # Save model weights
+            if i_iter % config.save_frequency == 0:
+                model.save('last.pt')
+
+            if i_iter >= config.max_steps:
+                print(
+                    f'Reached {config.max_steps} iterations. Finished training.')
+
+                # Apply SWA
+                print('Applying SWA...')
+                optimizer.swap_swa_sgd()
+                optimizer.bn_update(train_loader, model, device=config.device)
+
+                # Final validation
+                print("Final validation...")
+                validate(model, val_loader, config.device, i_iter)
+                return
+
+        i_epoch += 1
+        print(f'Finished epoch {i_epoch}, ({i_iter} iterations)')
+
+
 def val_step(model, x, device):
     model.eval()
     x = x.to(device)
@@ -131,7 +189,8 @@ def validate(model, val_loader, device, i_iter):
 
     # Print validation results
     print("\nValidation results:")
-    log_msg = " - ".join([f'val {k}: {np.mean(v):.4f}' for k, v in val_losses.items()])
+    log_msg = " - ".join([f'val {k}: {np.mean(v):.4f}' for k,
+                         v in val_losses.items()])
     log_msg += f"\npixel-wise average precision: {np.mean(pixel_aps):.4f}\n"
     log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
     log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
@@ -152,61 +211,77 @@ def validate(model, val_loader, device, i_iter):
     }, step=i_iter)
 
 
-def train(model, optimizer, train_loader, val_loader, config):
-    print('Starting training...')
-    i_iter = 0
-    i_epoch = 0
+def test(model, test_loader, config):
+    val_losses = defaultdict(list)
+    labels = []
+    anomaly_scores = []
+    segs = []
+    anomaly_maps = []
 
-    train_losses = defaultdict(list)
+    for x, y, label in test_loader:
+        # x, y, anomaly_map: [b, 1, h, w]
+        # Compute loss, anomaly map and anomaly score
+        loss_dict, anomaly_map, anomaly_score = val_step(model, x, config.device)
 
-    t_start = time()
-    while True:
-        for x in train_loader:
-            i_iter += 1
-            loss_dict = train_step(model, optimizer, x, config.device)
+        for k, v in loss_dict.items():
+            val_losses[k].append(v.item())
+        labels.append(label)
+        anomaly_scores.append(anomaly_score)
 
-            # Add to losses
-            for k, v in loss_dict.items():
-                train_losses[k].append(v.item())
+        segs.append(y)
+        anomaly_maps.append(anomaly_map)
 
-            if i_iter % config.log_frequency == 0:
-                # Print training loss
-                log_msg = " - ".join([f'{k}: {np.mean(v):.4f}' for k, v in train_losses.items()])
-                log_msg = f"Iteration {i_iter} - " + log_msg
-                log_msg += f" - time: {time() - t_start:.2f}s"
-                print(log_msg)
+    # Sample-wise metrics
+    labels = torch.cat(labels).numpy()
+    anomaly_scores = torch.cat(anomaly_scores).numpy()
+    sample_ap = evaluation.compute_average_precision(anomaly_scores, labels)
+    sample_auroc = evaluation.compute_auroc(anomaly_scores, labels)
 
-                # Log to w&b
-                wandb.log({
-                    f'train/{k}': np.mean(v) for k, v in train_losses.items()
-                }, step=i_iter)
+    # Pixel-wise metrics
+    anomaly_maps = torch.cat(anomaly_maps).numpy()
+    segs = torch.cat(segs).numpy()
+    pixel_ap = evaluation.compute_average_precision(anomaly_maps, segs)
+    pixel_auroc = evaluation.compute_auroc(anomaly_maps, segs)
+    iou_at_5fpr = evaluation.compute_iou_at_nfpr(anomaly_maps, segs,
+                                                 max_fpr=0.05)
+    dice_at_5fpr = evaluation.compute_dice_at_nfpr(anomaly_maps, segs,
+                                                   max_fpr=0.05)
 
-                # Reset
-                train_losses = defaultdict(list)
+    # Print test results
+    print("\nTest results:")
+    log_msg = " - ".join([f'val {k}: {np.mean(v):.4f}' for k,
+                         v in val_losses.items()])
+    log_msg += f"\npixel-wise average precision: {pixel_ap:.4f} - "
+    log_msg += f"pixel-wise AUROC: {pixel_auroc:.4f}\n"
+    log_msg += f"IoU @ 5% fpr: {iou_at_5fpr:.4f} - "
+    log_msg += f"Dice @ 5% fpr: {dice_at_5fpr:.4f}\n"
+    log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
+    log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
+    log_msg += f"Average positive label: {torch.tensor(segs).float().mean():.4f}\n"
+    print(log_msg)
 
-            if i_iter % config.val_frequency == 0:
-                validate(model, val_loader, config.device, i_iter)
-
-            # Save model weights
-            if i_iter % config.save_frequency == 0:
-                model.save('last.pt')
-
-            if i_iter >= config.max_steps:
-                print(f'Reached {config.max_steps} iterations. Finished training.')
-
-                # Apply SWA
-                print('Applying SWA...')
-                optimizer.swap_swa_sgd()
-                optimizer.bn_update(train_loader, model, device=config.device)
-
-                # Final validation
-                print("Final validation...")
-                validate(model, val_loader, config.device, i_iter)
-                return
-
-        i_epoch += 1
-        print(f'Finished epoch {i_epoch}, ({i_iter} iterations)')
+    # Log to tensorboard
+    wandb.log({
+        f'val/{k}': np.mean(v) for k, v in val_losses.items()
+    }, step=config.max_steps + 1)
+    wandb.log({
+        'val/pixel-ap': pixel_ap,
+        'val/pixel-auroc': pixel_auroc,
+        'val/sample-ap': sample_ap,
+        'val/sample-auroc': sample_auroc,
+        'val/iou-at-5fpr': iou_at_5fpr,
+        'val/dice-at-5fpr': dice_at_5fpr,
+        'val/input images': wandb.Image(x.cpu()[:config.num_images_log]),
+        'val/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
+        'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
+        'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log]),
+    }, step=config.max_steps + 1)
 
 
 if __name__ == '__main__':
+    # Training
     train(model, optimizer, train_loader, test_loader, config)
+
+    # Testing
+    print('Testing...')
+    test(model, test_loader, config)
