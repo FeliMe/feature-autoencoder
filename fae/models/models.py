@@ -209,31 +209,6 @@ class FeatureReconstructor(BaseModel):
         return anomaly_map, anomaly_score
 
 
-class FeatureDiscriminator(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.enc = vanilla_feature_encoder(
-            config.in_channels,
-            hidden_dims=config.discriminator_hidden_dims,
-            norm_layer="nn.InstanceNorm2d",
-            dropout=0.0, bias=False
-        )
-        self.enc.add_module("conv_out",
-                            nn.Conv2d(
-                                config.discriminator_hidden_dims[-1], 1,
-                                kernel_size=1, padding=0, bias=True))
-
-    def forward(self, x):
-        # return output and feature maps
-        res = [x]
-        for name, module in self.enc.named_modules():
-            if len(name) > 0 and '.' not in name:
-                res.append(module(res[-1]))
-        output = res[-1]
-        feature_maps = res[1:]
-        return output, feature_maps
-
-
 if __name__ == '__main__':
     # Config
     from argparse import Namespace
@@ -259,8 +234,5 @@ if __name__ == '__main__':
     # Forward
     feats, rec = fae(x)
     print(feats.shape, rec.shape)
-    # anomaly_map, anomaly_score = fae.predict_anomaly(x)
+    anomaly_map, anomaly_score = fae.predict_anomaly(x)
     # loss = fae.loss(x)
-
-    G = FeatureGenerator(config).to(device)
-    D = FeatureDiscriminator(config).to(device)

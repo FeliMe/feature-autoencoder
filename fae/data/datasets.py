@@ -122,7 +122,9 @@ def get_chexpert_train_files(path: str = CHEXPERTROOT) -> Tuple[List[str], List[
         seg_files (List[str]): List of segmentation files
     """
     files = glob(os.path.join(path, 'train/*/*/*.jpg'))
-    import IPython; IPython.embed(); exit(1)
+    import IPython
+    IPython.embed()
+    exit(1)
 
 
 def load_images(files: List[str], config) -> np.ndarray:
@@ -218,6 +220,16 @@ class TestDataset(Dataset):
         return img, seg, label
 
 
+def get_files(ds_name: str, sequence: str):
+    if f"get_{ds_name}_files" in sys.modules[__name__].__dict__:
+        get_files_fn = sys.modules[__name__].__dict__[
+            f"get_{ds_name}_files"]
+    else:
+        raise ValueError(f'Dataset {ds_name} not found')
+
+    return get_files_fn(sequence=sequence)
+
+
 def get_dataloaders(config):
     """Returns the train-, val- and testloader.
     Args:
@@ -226,22 +238,10 @@ def get_dataloaders(config):
         train_loader (torch.utils.data.DataLoader): Training loader
         test_loader (torch.utils.data.DataLoader): Test loader
     """
-    def get_files(ds_name, sequence):
-        if f"get_{ds_name}_files" in sys.modules[__name__].__dict__:
-            get_files_fn = sys.modules[__name__].__dict__[
-                f"get_{ds_name}_files"]
-        else:
-            raise ValueError(f'Dataset {ds_name} not found')
-
-        return get_files_fn(sequence=sequence)
-
     train_files = get_files(config.train_dataset, config.sequence)
-    # train_files, val_files = train_val_split(train_files, config.val_split)
     test_files, test_seg_files = get_files(
         config.test_dataset, config.sequence)
 
-    # train_files = train_files[:10]
-    # test_files = test_files[:5]
     print(len(train_files), len(test_files))
 
     train_imgs = np.concatenate(load_images(train_files, config))

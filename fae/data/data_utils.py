@@ -44,7 +44,7 @@ def load_nii(path: str, size: int = None, primary_axis: int = 0,
     return volume, affine
 
 
-def load_nii_nn(path: str, size: int,
+def load_nii_nn(path: str, size: int = None,
                 slice_range: Tuple[int, int] = None,
                 normalize: bool = False,
                 equalize_histogram: bool = False,
@@ -75,7 +75,7 @@ def load_nii_nn(path: str, size: int,
     return vol
 
 
-def load_segmentation(path: str, size: int,
+def load_segmentation(path: str, size: int = None,
                       slice_range: Tuple[int, int] = None,
                       threshold: float = 0.4):
     """Load a segmentation file"""
@@ -163,6 +163,9 @@ def show(imgs: List[np.ndarray], seg: List[np.ndarray] = None,
 
     if not isinstance(imgs, list):
         imgs = [imgs]
+    if seg is not None and not isinstance(seg, list):
+        seg = [seg]
+
     n = len(imgs)
     fig = plt.figure()
 

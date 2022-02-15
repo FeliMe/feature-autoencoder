@@ -4,7 +4,7 @@ from typing import Tuple
 
 import numpy as np
 from skimage import measure
-from sklearn.metrics import auc, average_precision_score, roc_auc_score
+from sklearn.metrics import auc, average_precision_score, roc_auc_score, roc_curve
 
 
 CPUS = cpu_count()
@@ -145,7 +145,7 @@ def compute_iou(preds: np.ndarray, targets: np.ndarray) -> float:
 
 
 def compute_iou_at_nfpr(preds: np.ndarray, targets: np.ndarray,
-                        max_fpr: float = 0.05, n_thresh: int = 100) -> float:
+                        max_fpr: float = 0.05) -> float:
     """
     Computes the Intersection over Union at 5% FPR.
 
@@ -157,16 +157,11 @@ def compute_iou_at_nfpr(preds: np.ndarray, targets: np.ndarray,
     preds, targets = np.array(preds), np.array(targets)
 
     # Find threshold for 5% FPR
-    t_last = 0
-    for t in np.linspace(preds.max(), preds.min(), n_thresh):
-        pred_bin = np.where(preds > t, 1, 0)
-        fpr = np.sum(pred_bin * (1 - targets)) / np.sum(1 - targets)
-        if fpr > max_fpr:
-            break
-        t = t_last
+    fpr, _, thresholds = roc_curve(targets.reshape(-1), preds.reshape(-1))
+    t = thresholds[max(0, fpr.searchsorted(max_fpr, 'right') - 1)]
 
     # Compute IoU
-    return compute_iou(np.where(preds > t_last, 1, 0), targets)
+    return compute_iou(np.where(preds > t, 1, 0), targets)
 
 
 def _iou_multiprocessing(preds: np.ndarray, targets: np.ndarray,
@@ -224,7 +219,7 @@ def compute_dice(preds: np.ndarray, targets: np.ndarray) -> float:
 
 
 def compute_dice_at_nfpr(preds: np.ndarray, targets: np.ndarray,
-                         max_fpr: float = 0.05, n_thresh: int = 100) -> float:
+                         max_fpr: float = 0.05) -> float:
     """
     Computes the Sorensen-Dice score at 5% FPR.
 
@@ -236,16 +231,11 @@ def compute_dice_at_nfpr(preds: np.ndarray, targets: np.ndarray,
     preds, targets = np.array(preds), np.array(targets)
 
     # Find threshold for 5% FPR
-    t_last = 0
-    for t in np.linspace(preds.max(), preds.min(), n_thresh):
-        pred_bin = np.where(preds > t, 1, 0)
-        fpr = np.sum(pred_bin * (1 - targets)) / np.sum(1 - targets)
-        if fpr > max_fpr:
-            break
-        t = t_last
+    fpr, _, thresholds = roc_curve(targets.reshape(-1), preds.reshape(-1))
+    t = thresholds[max(0, fpr.searchsorted(max_fpr, 'right') - 1)]
 
     # Compute Dice
-    return compute_dice(np.where(preds > t_last, 1, 0), targets)
+    return compute_dice(np.where(preds > t, 1, 0), targets)
 
 
 def _dice_multiprocessing(preds: np.ndarray, targets: np.ndarray,

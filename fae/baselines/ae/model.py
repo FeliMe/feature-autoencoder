@@ -1,5 +1,6 @@
 import os
 from argparse import Namespace
+from re import I
 from typing import List
 
 import torch
@@ -93,6 +94,7 @@ class AE(nn.Module):
     A n-layer variational autoencoder
     adapted from: https://github.com/AntixK/PyTorch-VAE/blob/master/models/vanilla_vae.py
     """
+
     def __init__(self, config):
         super().__init__()
 
@@ -104,7 +106,8 @@ class AE(nn.Module):
         dropout = config.dropout if "dropout" in config else 0.0
 
         intermediate_res = image_size // 2 ** len(hidden_dims)
-        intermediate_feats = intermediate_res * intermediate_res * hidden_dims[-1]
+        intermediate_feats = intermediate_res * \
+            intermediate_res * hidden_dims[-1]
 
         # Build encoder
         self.encoder = build_encoder(1, hidden_dims, use_batchnorm, dropout)

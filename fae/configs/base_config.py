@@ -5,6 +5,8 @@ base_parser = ArgumentParser(add_help=False)
 # General script settings
 base_parser.add_argument('--seed', type=int, default=42, help='Random seed')
 base_parser.add_argument('--debug', action='store_true', help='Debug mode')
+base_parser.add_argument('--no_train', action='store_false', dest='train',
+                         help='Disable training')
 base_parser.add_argument('--resume_path', type=str,
                          help='W&B path to checkpoint to resume training from')
 
@@ -37,6 +39,8 @@ base_parser.add_argument('--val_steps', type=int,
                          default=50, help='Steps per validation')
 base_parser.add_argument('--log_frequency', type=int,
                          default=50, help='Logging frequency')
+base_parser.add_argument('--save_frequency', type=int, default=200,
+                         help='Model checkpointing frequency')
 base_parser.add_argument('--num_images_log', type=int,
                          default=10, help='Number of images to log')
 

@@ -19,8 +19,8 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate anomaly_detection
 
 ## Run DFR with 5 different random seeds
-python trainer.py --seed 0 --batch_size 8
-python trainer.py --seed 1 --batch_size 8
-python trainer.py --seed 2 --batch_size 8
-python trainer.py --seed 3 --batch_size 8
-python trainer.py --seed 4 --batch_size 8
+python trainer.py --seed 0 --batch_size 8 --no_train --resume_path felix-meissen/feature_autoencoder/1l2wn7hb/last.pt --test_dataset wmh
+python trainer.py --seed 1 --batch_size 8 --no_train --resume_path felix-meissen/feature_autoencoder/f8e2ptgz/last.pt --test_dataset wmh
+python trainer.py --seed 2 --batch_size 8 --no_train --resume_path felix-meissen/feature_autoencoder/7icqlxws/last.pt --test_dataset wmh
+python trainer.py --seed 3 --batch_size 8 --no_train --resume_path felix-meissen/feature_autoencoder/34trteqh/last.pt --test_dataset wmh
+python trainer.py --seed 4 --batch_size 8 --no_train --resume_path felix-meissen/feature_autoencoder/1cfl4w9y/last.pt --test_dataset wmh

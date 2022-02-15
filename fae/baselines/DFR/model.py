@@ -127,8 +127,6 @@ class VGG19FeatureExtractor(nn.Module):
 
         self.layer_names = layer_names
 
-        # self.pad = nn.ReflectionPad2d(padding=1)
-
     def forward(self, inp: Tensor) -> Dict[str, Tensor]:
         """
         Args:
@@ -161,18 +159,22 @@ class AvgFeatAGG2d(nn.Module):
     """
     Convolution operation with mean kernel
     """
+
     def __init__(self, kernel_size: int, output_size: int = None,
                  dilation: int = 1, stride: int = 1):
         super(AvgFeatAGG2d, self).__init__()
         self.kernel_size = kernel_size
-        self.unfold = nn.Unfold(kernel_size=kernel_size, dilation=dilation, stride=stride)
-        self.fold = nn.Fold(output_size=output_size, kernel_size=1, dilation=1, stride=1)
+        self.unfold = nn.Unfold(kernel_size=kernel_size,
+                                dilation=dilation, stride=stride)
+        self.fold = nn.Fold(output_size=output_size,
+                            kernel_size=1, dilation=1, stride=1)
         self.output_size = output_size
 
     def forward(self, input: Tensor) -> Tensor:
         N, C, _, _ = input.shape
         output = self.unfold(input)  # (b, cxkxk, h*w)
-        output = torch.reshape(output, (N, C, int(self.kernel_size**2), int(self.output_size**2)))
+        output = torch.reshape(
+            output, (N, C, int(self.kernel_size**2), int(self.output_size**2)))
         output = torch.mean(output, dim=2)
         output = self.fold(output)
         return output
@@ -182,6 +184,7 @@ class Extractor(nn.Module):
     """
     Muti-scale regional feature based on VGG-feature maps.
     """
+
     def __init__(
         self,
         cnn_layers: List[str] = VGG19LAYERS[:12],
@@ -307,7 +310,8 @@ class FeatureAE(nn.Module):
         anomaly_map = F.interpolate(map_small, x.shape[-2:], mode='bilinear',
                                     align_corners=True)
         # Anomaly score only where object is detected (i.e. not background)
-        anomaly_score = torch.tensor([m[x_ > 0].mean() for m, x_ in zip(anomaly_map, x)])
+        anomaly_score = torch.tensor(
+            [m[x_ > 0].mean() for m, x_ in zip(anomaly_map, x)])
         # Loss from map small
         loss = map_small.mean()
         return anomaly_map, anomaly_score, loss
@@ -346,7 +350,8 @@ if __name__ == '__main__':
     ).to(config.device)
 
     # Sample input
-    x = torch.randn((2, 1, config.img_size, config.img_size), device=config.device)
+    x = torch.randn((2, 1, config.img_size, config.img_size),
+                    device=config.device)
 
     # Forward
     anomaly_map, anomaly_score = ae.predict_anomaly(x)

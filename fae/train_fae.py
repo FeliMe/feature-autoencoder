@@ -1,6 +1,9 @@
+import IPython
+from fae.data.data_utils import load_nii_nn, load_segmentation, show
 from argparse import ArgumentParser
 from collections import defaultdict
 from time import time
+from warnings import warn
 
 import numpy as np
 import torch
@@ -22,6 +25,11 @@ parser = ArgumentParser(
 )
 
 args = parser.parse_args()
+
+args.method = "FAE"
+
+if not args.train and args.resume_path is None:
+    warn("Testing untrained model")
 
 # Select training device
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -169,7 +177,7 @@ def validate(model, val_loader, device, i_iter):
         loss_dict, anomaly_map, anomaly_score = val_step(model, x, device)
 
         # Compute metrics
-        pixel_ap = compute_average_precision(anomaly_map, y)
+        pixel_ap = evaluation.compute_average_precision(anomaly_map, y)
 
         for k, v in loss_dict.items():
             val_losses[k].append(v.item())
@@ -184,8 +192,8 @@ def validate(model, val_loader, device, i_iter):
     # Compute sample-wise average precision and AUROC over all validation steps
     labels = torch.cat(labels)
     anomaly_scores = torch.cat(anomaly_scores)
-    sample_ap = compute_average_precision(anomaly_scores, labels)
-    sample_auroc = compute_auroc(anomaly_scores, labels)
+    sample_ap = evaluation.compute_average_precision(anomaly_scores, labels)
+    sample_auroc = evaluation.compute_auroc(anomaly_scores, labels)
 
     # Print validation results
     print("\nValidation results:")
@@ -221,7 +229,8 @@ def test(model, test_loader, config):
     for x, y, label in test_loader:
         # x, y, anomaly_map: [b, 1, h, w]
         # Compute loss, anomaly map and anomaly score
-        loss_dict, anomaly_map, anomaly_score = val_step(model, x, config.device)
+        loss_dict, anomaly_map, anomaly_score = val_step(
+            model, x, config.device)
 
         for k, v in loss_dict.items():
             val_losses[k].append(v.item())
@@ -257,7 +266,8 @@ def test(model, test_loader, config):
     log_msg += f"Dice @ 5% fpr: {dice_at_5fpr:.4f}\n"
     log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
     log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
-    log_msg += f"Average positive label: {torch.tensor(segs).float().mean():.4f}\n"
+    log_msg += f"Average positive pixel: {torch.tensor(segs).float().mean():.4f}\n"
+    log_msg += f"Average positive label: {torch.tensor(labels).float().mean():.4f}\n"
     print(log_msg)
 
     # Log to tensorboard
@@ -272,7 +282,6 @@ def test(model, test_loader, config):
         'val/iou-at-5fpr': iou_at_5fpr,
         'val/dice-at-5fpr': dice_at_5fpr,
         'val/input images': wandb.Image(x.cpu()[:config.num_images_log]),
-        'val/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
         'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
         'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log]),
     }, step=config.max_steps + 1)
@@ -280,7 +289,8 @@ def test(model, test_loader, config):
 
 if __name__ == '__main__':
     # Training
-    train(model, optimizer, train_loader, test_loader, config)
+    if config.train:
+        train(model, optimizer, train_loader, test_loader, config)
 
     # Testing
     print('Testing...')

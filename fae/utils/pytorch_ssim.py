@@ -6,8 +6,8 @@ import torch.nn.functional as F
 from torch import Tensor
 
 
-def gaussian(window_size: int, sigma: float) -> Tensor:
-    gauss = torch.Tensor(
+def gaussian(window_size: int, sigma: float = 1.5) -> Tensor:
+    gauss = Tensor(
         [exp(-(x - window_size // 2)**2 / float(2 * sigma**2)) for x in range(window_size)])
     return gauss / gauss.sum()
 

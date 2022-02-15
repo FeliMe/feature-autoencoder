@@ -2,6 +2,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from os.path import dirname
 from time import time
+from warnings import warn
 
 import numpy as np
 import torch
@@ -19,6 +20,8 @@ parser = ArgumentParser()
 # General script settings
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--debug', action='store_true', help='Debug mode')
+parser.add_argument('--no_train', action='store_false', dest='train',
+                    help='Disable training')
 parser.add_argument('--resume_path', type=str,
                     help='W&B path to checkpoint to resume training from')
 
@@ -69,6 +72,11 @@ parser.add_argument('--loss_fn', type=str, default='mse', help='loss function',
 
 args = parser.parse_args()
 
+args.method = f"AE_{args.loss_fn}"
+
+if not args.train and args.resume_path is None:
+    warn("Testing untrained model")
+
 # Select training device
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -98,6 +106,24 @@ print(model.decoder)
 if config.resume_path is not None:
     print("Loading model from checkpoint...")
     model.load(config.resume_path)
+
+#####
+# vpath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_004/BraTS20_Training_004_t1_registered.nii.gz"
+# spath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_004/anomaly_segmentation.nii.gz"
+# x = load_nii_nn(vpath, size=config.image_size, equalize_histogram=True)
+# y = load_segmentation(spath, size=config.image_size)
+# x = torch.tensor(x[75][None])
+# y = y[75]
+# with torch.no_grad():
+#     rec = model(x.to(config.device)).cpu()
+#     res = model.loss_fn(rec, x)
+
+# x, rec, res = x[0, 0], rec[0, 0], res[0, 0]
+# # show(x, np.where(anomaly_map > 0.75, anomaly_map, 0))
+
+# IPython.embed()
+# exit(1)
+#####
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
@@ -312,7 +338,8 @@ def test(model, test_loader, device, config):
 
 
 if __name__ == '__main__':
-    train(model, optimizer, train_loader, test_loader, config)
+    if config.train:
+        train(model, optimizer, train_loader, test_loader, config)
 
     # Testing
     print('Testing...')

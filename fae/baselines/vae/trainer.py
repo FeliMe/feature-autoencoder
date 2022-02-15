@@ -2,6 +2,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from os.path import dirname
 from time import time
+from warnings import warn
 
 import numpy as np
 import torch
@@ -19,6 +20,8 @@ parser = ArgumentParser()
 # General script settings
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--debug', action='store_true', help='Debug mode')
+parser.add_argument('--no_train', action='store_false', dest='train',
+                    help='Disable training')
 parser.add_argument('--resume_path', type=str,
                     help='W&B path to checkpoint to resume training from')
 
@@ -69,8 +72,13 @@ parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate')
 
 args = parser.parse_args()
 
+if not args.train and args.resume_path is None:
+    warn("Testing untrained model")
+
 # Select training device
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+args.method = "VAE"
 
 wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
            mode="disabled" if args.debug else "online",
@@ -313,7 +321,8 @@ def test(model, test_loader, device, config):
 
 
 if __name__ == '__main__':
-    train(model, optimizer, train_loader, test_loader, config)
+    if config.train:
+        train(model, optimizer, train_loader, test_loader, config)
 
     # Testing
     print('Testing...')

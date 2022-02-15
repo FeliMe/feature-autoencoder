@@ -1,7 +1,10 @@
+from typing import Dict, List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models as tv_models
+from torch import Tensor
 
 
 RESNETLAYERS = ['layer0', 'layer1', 'layer2', 'layer3', 'layer4', 'avgpool']
@@ -13,7 +16,7 @@ def _set_requires_grad_false(layer):
 
 
 class ResNetFeatureExtractor(nn.Module):
-    def __init__(self, resnet, layer_names=RESNETLAYERS):
+    def __init__(self, resnet, layer_names: List[str] = RESNETLAYERS):
         """
         Returns features on multiple levels from a ResNet18.
         Available layers: 'layer0', 'layer1', 'layer2', 'layer3', 'layer4', 'avgpool'
@@ -40,7 +43,7 @@ class ResNetFeatureExtractor(nn.Module):
 
         self.layer_names = layer_names
 
-    def forward(self, inp):
+    def forward(self, inp: Tensor) -> Dict[str, Tensor]:
         if inp.shape[1] == 1:
             inp = inp.repeat(1, 3, 1, 1)
 
@@ -55,7 +58,7 @@ class ResNetFeatureExtractor(nn.Module):
 
 
 class ResNet18FeatureExtractor(ResNetFeatureExtractor):
-    def __init__(self, layer_names=RESNETLAYERS):
+    def __init__(self, layer_names: List[str] = RESNETLAYERS):
         super().__init__(tv_models.resnet18(pretrained=True), layer_names)
 
 
@@ -92,7 +95,7 @@ class Extractor(nn.Module):
         inp = torch.randn((2, 1, self.inp_size, self.inp_size), device=device)
         return sum([feat_map.shape[1] for feat_map in self.backbone(inp).values()])
 
-    def forward(self, inp: torch.Tensor):
+    def forward(self, inp: Tensor):
         # Center input
         inp = (inp - 0.5) * 2
 
@@ -127,4 +130,4 @@ if __name__ == '__main__':
     extractor = Extractor(**vars(config)).to(device)
     x = torch.randn((8, 1, config.inp_size, config.inp_size), device=device)
     y = extractor(x)
-    print(y.shape)
+    # print(y.shape)

@@ -2,6 +2,7 @@ from argparse import ArgumentParser
 from collections import defaultdict
 from os.path import dirname
 from time import time
+from warnings import warn
 
 import numpy as np
 import torch
@@ -23,6 +24,8 @@ parser = ArgumentParser()
 # General script settings
 parser.add_argument('--seed', type=int, default=42, help='Random seed')
 parser.add_argument('--debug', action='store_true', help='Debug mode')
+parser.add_argument('--no_train', action='store_false', dest='train',
+                    help='Disable training')
 parser.add_argument('--resume_path', type=str,
                     help='W&B path to checkpoint to resume training from')
 
@@ -81,6 +84,11 @@ parser.add_argument('--loss_fn', type=str, default='l1', help='loss function',
                     choices=['l1', 'mse', 'ssim'])
 
 args = parser.parse_args()
+
+args.method = "f-AnoGAN"
+
+if not args.train and args.resume_path is None:
+    warn("Testing untrained model")
 
 # Select training device
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -366,6 +374,7 @@ def val_step_encoder(model, x, config):
         for i in range(x.shape[0]):
             roi = anomaly_map[i][x[i] > 0]
             img_diff.append(roi.mean())
+        img_diff = torch.stack(img_diff)
         feat_diff = (x_feats - x_rec_feats).pow(2).mean((1))
         anomaly_score = img_diff + config.feat_weight * feat_diff
 
@@ -445,7 +454,7 @@ def test_encoder(model, test_loader, config):
             model, x, config)
 
         for k, v in loss_dict.items():
-            val_losses[k].append(v.item())
+            val_losses[k].append(v)
         labels.append(label)
         anomaly_scores.append(anomaly_score)
 
@@ -484,7 +493,7 @@ def test_encoder(model, test_loader, config):
     # Log to tensorboard
     wandb.log({
         f'val/{k}': np.mean(v) for k, v in val_losses.items()
-    }, step=config.max_steps + 1)
+    }, step=config.max_steps_encoder + 1)
     wandb.log({
         'val/pixel-ap': pixel_ap,
         'val/pixel-auroc': pixel_auroc,
@@ -496,13 +505,13 @@ def test_encoder(model, test_loader, config):
         'val/reconstructed images': wandb.Image(rec.cpu()[:config.num_images_log]),
         'val/targets': wandb.Image(y.float().cpu()[:config.num_images_log]),
         'val/anomaly maps': wandb.Image(anomaly_map.cpu()[:config.num_images_log]),
-    }, step=config.max_steps + 1)
+    }, step=config.max_steps_encoder + 1)
 
 
 if __name__ == '__main__':
-    train_gan(model, optimizer_g, optimizer_d, train_loader, config)
-    train_encoder(model, optimizer_e, train_loader, test_loader, config)
-    # validate_encoder(model, test_loader, config.max_steps_encoder + 1, config):
+    if config.train:
+        train_gan(model, optimizer_g, optimizer_d, train_loader, config)
+        train_encoder(model, optimizer_e, train_loader, test_loader, config)
 
     # Testing
     print('Testing...')
