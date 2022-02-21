@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import wandb
 
+from fae import WANDBNAME, WANDBPROJECT
 from fae.baselines.ae.model import AE
 from fae.data.datasets import get_dataloaders
 from fae.utils.utils import seed_everything
@@ -29,7 +30,9 @@ parser.add_argument('--resume_path', type=str,
 parser.add_argument('--train_dataset', type=str,
                     default='camcan', help='Training dataset name')
 parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                    choices=['brats', 'mslub', 'msseg', 'wmh'])
+                    choices=['brats'])
+parser.add_argument('--val_split', type=float,
+                    default=0.1, help='Validation fraction')
 parser.add_argument('--image_size', type=int, default=128, help='Image size')
 parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
 parser.add_argument('--slice_range', type=int, nargs='+',
@@ -79,7 +82,7 @@ if not args.train and args.resume_path is None:
 # Select training device
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
+wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=args,
            mode="disabled" if args.debug else "online",
            dir=dirname(dirname(dirname(__file__))))
 config = wandb.config
@@ -97,7 +100,7 @@ model = AE(config).to(config.device)
 
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
-                             weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
+                             weight_decay=config.weight_decay)
 # Print model
 print(model.encoder)
 print(model.decoder)
@@ -106,31 +109,13 @@ if config.resume_path is not None:
     print("Loading model from checkpoint...")
     model.load(config.resume_path)
 
-#####
-# vpath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_004/BraTS20_Training_004_t1_registered.nii.gz"
-# spath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_004/anomaly_segmentation.nii.gz"
-# x = load_nii_nn(vpath, size=config.image_size, equalize_histogram=True)
-# y = load_segmentation(spath, size=config.image_size)
-# x = torch.tensor(x[75][None])
-# y = y[75]
-# with torch.no_grad():
-#     rec = model(x.to(config.device)).cpu()
-#     res = model.loss_fn(rec, x)
-
-# x, rec, res = x[0, 0], rec[0, 0], res[0, 0]
-# # show(x, np.where(anomaly_map > 0.75, anomaly_map, 0))
-
-# IPython.embed()
-# exit(1)
-#####
-
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
 
 
 print("Loading data...")
 t_load_data_start = time()
-train_loader, test_loader = get_dataloaders(config)
+train_loader, val_loader, test_loader = get_dataloaders(config)
 print(f'Loaded datasets in {time() - t_load_data_start:.2f}s')
 
 
@@ -338,7 +323,7 @@ def test(model, test_loader, device, config):
 
 if __name__ == '__main__':
     if config.train:
-        train(model, optimizer, train_loader, test_loader, config)
+        train(model, optimizer, train_loader, val_loader, config)
 
     # Testing
     print('Testing...')

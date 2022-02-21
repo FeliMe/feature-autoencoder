@@ -16,7 +16,7 @@ base_parser.add_argument('--train_dataset', type=str,
 base_parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
                          choices=['brats', 'mslub', 'msseg', 'wmh'])
 base_parser.add_argument('--val_split', type=float,
-                         default=0.2, help='Validation fraction')  # TODO: Remove
+                         default=0.1, help='Validation fraction')
 base_parser.add_argument('--sequence', type=str,
                          default='t1', help='MRI sequence')
 base_parser.add_argument('--num_workers', type=int,
@@ -57,7 +57,6 @@ base_parser.add_argument('--batch_size', type=int,
 # Model settings
 base_parser.add_argument(
     '--model', type=str, default='FeatureReconstructor', help='Model name')
-# base_parser.add_argument('--hidden_dims', type=int, nargs='+', default=[400, 450, 500, 600], help='Autoencoder hidden dimensions')
 base_parser.add_argument('--hidden_dims', type=int, nargs='+',
                          default=[100, 150, 200, 300], help='Autoencoder hidden dimensions')
 base_parser.add_argument('--dropout', type=float,

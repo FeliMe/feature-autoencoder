@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torchsummary import summary
 import wandb
 
+from fae import WANDBNAME, WANDBPROJECT
 from fae.baselines.fpi.model import WideResNetAE
 from fae.baselines.fpi.fpi_utils import get_dataloaders
 from fae.utils.utils import seed_everything
@@ -30,7 +31,9 @@ parser.add_argument('--resume_path', type=str,
 parser.add_argument('--train_dataset', type=str,
                     default='camcan', help='Training dataset name')
 parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                    choices=['brats', 'mslub', 'msseg', 'wmh'])
+                    choices=['brats'])
+parser.add_argument('--val_split', type=float,
+                    default=0.1, help='Validation fraction')
 parser.add_argument('--image_size', type=int, default=128, help='Image size')
 parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
 parser.add_argument('--slice_range', type=int, nargs='+',
@@ -76,7 +79,7 @@ if not args.train and args.resume_path is None:
 # Select training device
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
+wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=args,
            mode="disabled" if args.debug else "online",
            dir=dirname(dirname(dirname(__file__))))
 config = wandb.config
@@ -97,7 +100,7 @@ wandb.watch(model)
 
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
-                             weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
+                             weight_decay=config.weight_decay)
 # Print model
 summary(model, (1, config.image_size, config.image_size))
 
@@ -111,7 +114,7 @@ if config.resume_path is not None:
 
 print("Loading data...")
 t_load_data_start = time()
-train_loader, test_loader = get_dataloaders(config)
+train_loader, val_loader, test_loader = get_dataloaders(config)
 print(f'Loaded datasets in {time() - t_load_data_start:.2f}s')
 
 
@@ -319,7 +322,7 @@ def test(model, test_loader, device, config):
 
 if __name__ == '__main__':
     if config.train:
-        train(model, optimizer, train_loader, test_loader, config)
+        train(model, optimizer, train_loader, val_loader, config)
 
     # Testing
     print('Testing...')

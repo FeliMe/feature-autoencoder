@@ -2,7 +2,7 @@ from functools import partial
 from glob import glob
 import os
 import sys
-from typing import List, Tuple
+from typing import List, Tuple, Sequence
 
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
@@ -10,17 +10,6 @@ from torch.utils.data import Dataset, DataLoader
 from fae import (
     CAMCANROOT,
     BRATSROOT,
-    MSLUBROOT,
-    MSSEGROOT,
-    WMHROOT,
-    CHEXPERTROOT,
-    COLONOSCOPYROOT,
-)
-from fae.data.artificial_anomalies import (
-    source_deformation_anomaly,
-    sink_deformation_anomaly,
-    pixel_shuffle_anomaly,
-    random_anomaly
 )
 from fae.data.data_utils import (
     load_files_to_ram,
@@ -58,73 +47,6 @@ def get_brats_files(path: str = BRATSROOT, sequence: str = "t1") -> Tuple[List[s
         f), 'anomaly_segmentation.nii.gz') for f in files]
     assert len(files) > 0, "No files found in BraTS"
     return files, seg_files
-
-
-def get_mslub_files(path: str = MSLUBROOT, sequence: str = "t1") -> Tuple[List[str], List[str]]:
-    """Get all MSLUB files in a given sequence (t1, t2, or flair).
-    Args:
-        path (str): Path to MSLU-B root directory
-        sequence (str): One of "t1", "t2", or "flair"
-    Returns:
-        files (List[str]): List of files
-        seg_files (List[str]): List of segmentation files
-    """
-    if sequence.lower().startswith('t'):
-        sequence += 'w'
-    files = glob(os.path.join(path, 'lesion/*',
-                              f'{sequence.upper()}*stripped_registered.nii.gz'))
-    seg_files = [os.path.join(os.path.dirname(
-        f), 'anomaly_segmentation.nii.gz') for f in files]
-    assert len(files) > 0, "No files found in MSLUB"
-    return files, seg_files
-
-
-def get_msseg_files(path: str = MSSEGROOT, sequence: str = "t2") -> Tuple[List[str], List[str]]:
-    """Get all MSSEG files in a given sequence (t2, or flair).
-    Args:
-        path (str): Path to MSSEG root directory
-        sequence (str): One of "t2", or "flair"
-    Returns:
-        files (List[str]): List of files
-        seg_files (List[str]): List of segmentation files
-    """
-    files = glob(os.path.join(path, 'training/training*/training*/',
-                              f'{sequence.lower()}*registered.nii'))
-    seg_files = [os.path.join(os.path.dirname(
-        f), 'anomaly_segmentation.nii.gz') for f in files]
-    assert len(files) > 0, "No files found in MSSEG2015"
-    return files, seg_files
-
-
-def get_wmh_files(path: str = WMHROOT, sequence: str = "t1") -> Tuple[List[str], List[str]]:
-    """Get all WMH files in a given sequence (t1, or flair).
-    Args:
-        path (str): Path to WMH root directory
-        sequence (str): One of "t1", or "flair"
-    Returns:
-        files (List[str]): List of files
-        seg_files (List[str]): List of segmentation files
-    """
-    files = glob(os.path.join(path, '*/*/orig/',
-                              f'{sequence.upper()}*stripped_registered.nii.gz'))
-    seg_files = [os.path.join(os.path.dirname(
-        f), 'anomaly_segmentation.nii.gz') for f in files]
-    assert len(files) > 0, "No files found in WMH"
-    return files, seg_files
-
-
-def get_chexpert_train_files(path: str = CHEXPERTROOT) -> Tuple[List[str], List[str]]:
-    """Get all CHEXPERT files.
-    Args:
-        path (str): Path to CHEXPERT root directory
-    Returns:
-        files (List[str]): List of files
-        seg_files (List[str]): List of segmentation files
-    """
-    files = glob(os.path.join(path, 'train/*/*/*.jpg'))
-    import IPython
-    IPython.embed()
-    exit(1)
 
 
 def load_images(files: List[str], config) -> np.ndarray:
@@ -176,30 +98,6 @@ class TrainDataset(Dataset):
         return self.imgs[idx]
 
 
-class ValidationDataset(Dataset):
-    """
-    Validation dataset. With artificial anomalies.
-    """
-
-    def __init__(self, imgs: np.ndarray, anomaly_size: Tuple[int, int]):
-        super().__init__()
-        self.imgs = imgs
-        self.anomaly_size = anomaly_size
-
-    def __len__(self):
-        return len(self.imgs)
-
-    def create_anomaly(self, img: np.ndarray):
-        anomaly_fn = np.random.choice([source_deformation_anomaly, sink_deformation_anomaly,
-                                       pixel_shuffle_anomaly])
-        return random_anomaly(img, radius_range=self.anomaly_size,
-                              anomaly_fn=anomaly_fn)
-
-    def __getitem__(self, idx):
-        img, seg = self.create_anomaly(self.imgs[idx])
-        return [img, seg]
-
-
 class TestDataset(Dataset):
     """
     Test dataset. With real anomalies.
@@ -230,6 +128,20 @@ def get_files(ds_name: str, sequence: str):
     return get_files_fn(sequence=sequence)
 
 
+def val_test_split(files: Sequence, val_size: float, shuffle: bool = True) -> Tuple[List, List]:
+    """Split a list of files into validation and test sets"""
+    # Shuffle before splitting
+    if shuffle:
+        np.random.shuffle(files)
+
+    # Split
+    val_size = int(len(files) * val_size)
+    val_files = files[:val_size]
+    test_files = files[val_size:]
+
+    return val_files, test_files
+
+
 def get_dataloaders(config):
     """Returns the train-, val- and testloader.
     Args:
@@ -242,29 +154,50 @@ def get_dataloaders(config):
     test_files, test_seg_files = get_files(
         config.test_dataset, config.sequence)
 
-    print(len(train_files), len(test_files))
+    # Split into validation and test sets
+    val_size = int(len(test_files) * config.val_split)
+    val_files = test_files[:val_size]
+    test_files = test_files[val_size:]
+    val_seg_files = test_seg_files[:val_size]
+    test_seg_files = test_seg_files[val_size:]
+
+    print(f"Found {len(train_files)} training files files")
+    print(f"Found {len(val_files)} validation files files")
+    print(f"Found {len(test_files)} test files files")
 
     train_imgs = np.concatenate(load_images(train_files, config))
+    val_imgs = np.concatenate(load_images(val_files, config))
+    val_segs = np.concatenate(load_segmentations(val_seg_files, config))
     test_imgs = np.concatenate(load_images(test_files, config))
     test_segs = np.concatenate(load_segmentations(test_seg_files, config))
 
-    # Shuffle test data
-    perm = np.random.permutation(len(test_imgs))
-    test_imgs = test_imgs[perm]
-    test_segs = test_segs[perm]
+    # Shuffle validation and test data
+    val_perm = np.random.permutation(len(val_imgs))
+    val_imgs = val_imgs[val_perm]
+    val_segs = val_segs[val_perm]
 
+    test_perm = np.random.permutation(len(test_imgs))
+    test_imgs = test_imgs[test_perm]
+    test_segs = test_segs[test_perm]
+
+    # Create dataloaders
     train_loader = DataLoader(TrainDataset(train_imgs),
                               batch_size=config.batch_size,
                               shuffle=True,
                               num_workers=config.num_workers)
+    val_loader = DataLoader(TestDataset(val_imgs, val_segs),
+                            batch_size=config.batch_size,
+                            shuffle=False,
+                            num_workers=config.num_workers)
     test_loader = DataLoader(TestDataset(test_imgs, test_segs),
                              batch_size=config.batch_size,
                              shuffle=False,
                              num_workers=config.num_workers)
     print(f"Len train_loader: {len(train_loader)}")
+    print(f"Len val_loader: {len(val_loader)}")
     print(f"Len test_loader: {len(test_loader)}")
 
-    return train_loader, test_loader
+    return train_loader, val_loader, test_loader
 
 
 if __name__ == "__main__":
@@ -272,29 +205,17 @@ if __name__ == "__main__":
     from fae.data.data_utils import show
     config = Namespace()
     config.slice_range = (55, 135)
-    config.image_size = 224
-    config.normalize = True
-    config.equalize_histogram = False
+    config.image_size = 128
+    config.normalize = False
+    config.equalize_histogram = True
     config.batch_size = 32
 
     # Test finding files
-    chexpert_train_files = get_chexpert_train_files()
-    print(len(chexpert_train_files))
-
     camcan_files = get_camcan_files(sequence='t1')
     print(len(camcan_files))
 
     brats_files, brats_seg_files = get_brats_files(sequence='t1')
     print(len(brats_files), len(brats_seg_files))
-
-    mslub_files, mslub_seg_files = get_mslub_files(sequence='t1')
-    print(len(mslub_files), len(mslub_seg_files))
-
-    msseg_files, msseg_seg_files = get_msseg_files(sequence='t2')
-    print(len(msseg_files), len(msseg_seg_files))
-
-    wmh_files, wmh_seg_files = get_wmh_files(sequence='t1')
-    print(len(wmh_files), len(wmh_seg_files))
 
     # Test training dataset
     imgs = np.concatenate(load_images(camcan_files[:10], config))[:, None]
@@ -303,15 +224,6 @@ if __name__ == "__main__":
     x = next(iter(train_loader))
     print(x.shape)
     show(x[0, 0])
-
-    # Test validation dataset
-    imgs = np.concatenate(load_images(camcan_files[:10], config))[:, None]
-    print(imgs.shape)
-    val_ds = ValidationDataset(imgs[40:], (5, 50))
-    val_loader = DataLoader(val_ds, batch_size=config.batch_size)
-    x, y = next(iter(val_loader))
-    print(x.shape, y.shape)
-    show([x[0, 0], y[0, 0]])
 
     # Test test dataset
     imgs = np.concatenate(load_images(brats_files[:10], config))[:, None]

@@ -7,7 +7,8 @@ import numpy as np
 import torch
 import wandb
 
-from model import Extractor, FeatureAE
+from fae import WANDBNAME, WANDBPROJECT
+from fae.baselines.DFR.model import Extractor, FeatureAE
 from fae.data.datasets import get_dataloaders
 from fae.utils.utils import seed_everything
 from fae.utils import evaluation
@@ -29,7 +30,9 @@ parser.add_argument('--resume_path', type=str,
 parser.add_argument('--train_dataset', type=str,
                     default='camcan', help='Training dataset name')
 parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                    choices=['brats', 'mslub', 'msseg', 'wmh'])
+                    choices=['brats'])
+parser.add_argument('--val_split', type=float,
+                    default=0.1, help='Validation fraction')
 parser.add_argument('--image_size', type=int, default=128, help='Image size')
 parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
 parser.add_argument('--slice_range', type=int, nargs='+',
@@ -75,7 +78,7 @@ args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 if not args.train and args.resume_path is None:
     warn("Testing untrained model")
 
-wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
+wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=args,
            mode="disabled" if args.debug else "online",
            dir=dirname(dirname(dirname(__file__))))
 config = wandb.config
@@ -90,10 +93,16 @@ seed_everything(config.seed)
 
 print("Loading data...")
 t_load_data_start = time()
-train_loader, test_loader = get_dataloaders(config)
+train_loader, val_loader, test_loader = get_dataloaders(config)
+
+# Change batch size for val and test
+val_loader = torch.utils.data.DataLoader(val_loader.dataset, batch_size=64,
+                                         shuffle=False,
+                                         num_workers=config.num_workers)
 test_loader = torch.utils.data.DataLoader(test_loader.dataset, batch_size=64,
                                           shuffle=False,
                                           num_workers=config.num_workers)
+
 print(f'Loaded datasets in {time() - t_load_data_start:.2f}s')
 
 
@@ -118,7 +127,7 @@ model = FeatureAE(
 
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
-                             weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
+                             weight_decay=config.weight_decay)
 # Print model
 print(model.encoder)
 print(model.decoder)
@@ -317,7 +326,7 @@ def test(model, test_loader, device, config):
 
 if __name__ == '__main__':
     if config.train:
-        train(model, optimizer, train_loader, test_loader, config)
+        train(model, optimizer, train_loader, val_loader, config)
 
     # Testing
     print('Testing...')

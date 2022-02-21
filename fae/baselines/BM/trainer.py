@@ -26,7 +26,9 @@ parser.add_argument("--seed", type=int, default=42, help='Random seed')
 parser.add_argument('--train_dataset', type=str,
                     default='camcan', help='Training dataset name')
 parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                    choices=['brats', 'mslub', 'msseg', 'wmh'])
+                    choices=['brats'])
+parser.add_argument('--val_split', type=float,
+                    default=0.1, help='Validation fraction')
 parser.add_argument('--image_size', type=int, default=128, help='Image size')
 parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
 parser.add_argument('--return_volumes', type=bool, default=True)
@@ -68,6 +70,10 @@ def get_test_volumes(config):
     """Get all image slices and segmentations of the BraTS brain MRI dataset"""
     # Get all files
     files, seg_files = get_files(config.test_dataset, sequence=config.sequence)
+
+    val_size = int(len(files) * config.val_split)
+    files = files[val_size:]
+    seg_files = seg_files[val_size:]
 
     # Load all files
     volumes = load_files_to_ram(

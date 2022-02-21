@@ -145,19 +145,6 @@ def rectangularize(img: np.ndarray) -> np.ndarray:
     return img
 
 
-def train_val_split(files: Sequence, val_size: float):
-    """Split a list of files into training and validation sets"""
-    # Shuffle
-    np.random.shuffle(files)
-
-    # Split
-    val_size = int(len(files) * val_size)
-    train_files = files[val_size:]
-    val_files = files[:val_size]
-
-    return train_files, val_files
-
-
 def show(imgs: List[np.ndarray], seg: List[np.ndarray] = None,
          path: str = None) -> None:
 

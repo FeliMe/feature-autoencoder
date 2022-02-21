@@ -1,4 +1,3 @@
-import IPython
 from argparse import ArgumentParser
 from collections import defaultdict
 from time import time
@@ -7,14 +6,13 @@ from warnings import warn
 import numpy as np
 import torch
 import wandb
-from torchcontrib.optim import SWA
 
+from fae import WANDBNAME, WANDBPROJECT
 from fae.configs.base_config import base_parser
 from fae.data import datasets
 from fae.models import models
 from fae.utils.utils import seed_everything
 from fae.utils import evaluation
-from fae.data.data_utils import load_nii_nn, load_segmentation, show
 
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
@@ -34,7 +32,7 @@ if not args.train and args.resume_path is None:
 # Select training device
 args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-wandb.init(project="feature_autoencoder", entity="felix-meissen", config=args,
+wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=args,
            mode="disabled" if args.debug else "online")
 config = wandb.config
 
@@ -62,8 +60,7 @@ wandb.watch(model)
 
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
-                             weight_decay=config.weight_decay)  # betas = (0.9, 0.999)
-optimizer = SWA(optimizer, 7500, 250, config.lr * 0.5)
+                             weight_decay=config.weight_decay)
 # Print model
 print(model.ae.enc)
 print(model.ae.dec)
@@ -73,43 +70,12 @@ if config.resume_path is not None:
     model.load(config.resume_path)
 
 
-#####
-# vpath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_007/BraTS20_Training_007_t1_registered.nii.gz"
-# spath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_007/anomaly_segmentation.nii.gz"
-# vol = load_nii_nn(vpath, size=config.image_size, equalize_histogram=True)
-# seg = load_segmentation(spath, size=config.image_size)
-
-
-# def process(model, vol, seg, slice):
-#     x = torch.tensor(vol[slice][None])
-#     y = seg[slice]
-#     with torch.no_grad():
-#         feats, rec = model(x.to(config.device))
-#         feats, rec = feats.cpu(), rec.cpu()
-#         res = model.loss_fn(rec, feats).mean(1, keepdim=True)
-#         a = torch.nn.functional.interpolate(
-#             res, size=x.shape[-2:], mode='bilinear', align_corners=True)
-#         a += 1.
-#         a = torch.where(x > 0, a, torch.zeros_like(a))
-
-#     x, y, rec, res, a = x[0, 0], y[0], rec[0], res[0, 0], a[0, 0]
-#     return x.numpy(), y, rec.numpy(), res.numpy(), a.numpy()
-
-
-# x, y, rec, res, a = process(model, vol, seg, slice=45)
-# # show(x, np.where(a > 0.75, a, 0))
-
-# IPython.embed()
-# exit(1)
-#####
-
-
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""
 
 
 print("Loading data...")
 t_load_data_start = time()
-train_loader, test_loader = datasets.get_dataloaders(config)
+train_loader, val_loader, test_loader = datasets.get_dataloaders(config)
 print(f'Loaded {config.train_dataset} and {config.test_dataset} in '
       f'{time() - t_load_data_start:.2f}s')
 
@@ -171,11 +137,6 @@ def train(model, optimizer, train_loader, val_loader, config):
             if i_iter >= config.max_steps:
                 print(
                     f'Reached {config.max_steps} iterations. Finished training.')
-
-                # Apply SWA
-                print('Applying SWA...')
-                optimizer.swap_swa_sgd()
-                optimizer.bn_update(train_loader, model, device=config.device)
 
                 # Final validation
                 print("Final validation...")
@@ -321,7 +282,7 @@ def test(model, test_loader, config):
 if __name__ == '__main__':
     # Training
     if config.train:
-        train(model, optimizer, train_loader, test_loader, config)
+        train(model, optimizer, train_loader, val_loader, config)
 
     # Testing
     print('Testing...')
