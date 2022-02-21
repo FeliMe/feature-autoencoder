@@ -24,6 +24,7 @@ class ResNetFeatureExtractor(nn.Module):
             resnet (nn.Module): Type of resnet used
             layer_names (list): List of string of layer names where to return
                                 the features. Must be ordered
+            pretrained (bool): Whether to load pretrained weights
         Returns:
             out (dict): Dictionary containing the extracted features as
                         torch.tensors
@@ -58,8 +59,9 @@ class ResNetFeatureExtractor(nn.Module):
 
 
 class ResNet18FeatureExtractor(ResNetFeatureExtractor):
-    def __init__(self, layer_names: List[str] = RESNETLAYERS):
-        super().__init__(tv_models.resnet18(pretrained=True), layer_names)
+    def __init__(self, layer_names: List[str] = RESNETLAYERS,
+                 pretrained: bool = True):
+        super().__init__(tv_models.resnet18(pretrained=pretrained), layer_names)
 
 
 class Extractor(nn.Module):
@@ -73,10 +75,12 @@ class Extractor(nn.Module):
         upsample='bilinear',
         inp_size=128,
         keep_feature_prop=1.0,
+        pretrained=True,
     ):
         super().__init__()
 
-        self.backbone = ResNet18FeatureExtractor(layer_names=cnn_layers)
+        self.backbone = ResNet18FeatureExtractor(layer_names=cnn_layers,
+                                                 pretrained=pretrained)
         self.inp_size = inp_size
         self.featmap_size = inp_size // 4
         self.upsample = upsample

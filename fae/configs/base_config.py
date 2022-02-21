@@ -13,8 +13,8 @@ base_parser.add_argument('--resume_path', type=str,
 # Data settings
 base_parser.add_argument('--train_dataset', type=str,
                          default='camcan', help='Training dataset name')
-base_parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                         choices=['brats', 'mslub', 'msseg', 'wmh'])
+base_parser.add_argument('--test_dataset', type=str, default='brats',
+                         help='Test dataset name')
 base_parser.add_argument('--val_split', type=float,
                          default=0.1, help='Validation fraction')
 base_parser.add_argument('--sequence', type=str,
@@ -55,8 +55,10 @@ base_parser.add_argument('--batch_size', type=int,
                          default=32, help='Batch size')
 
 # Model settings
-base_parser.add_argument(
-    '--model', type=str, default='FeatureReconstructor', help='Model name')
+base_parser.add_argument('--model', type=str, default='FeatureReconstructor',
+                         help='Model name')
+base_parser.add_argument('--loss_fn', type=str, default='ssim',
+                         choices=['ssim', 'mse'], help='Loss function')
 base_parser.add_argument('--hidden_dims', type=int, nargs='+',
                          default=[100, 150, 200, 300], help='Autoencoder hidden dimensions')
 base_parser.add_argument('--dropout', type=float,
@@ -65,3 +67,5 @@ base_parser.add_argument('--extractor_cnn_layers',
                          type=str, nargs='+', default=['layer0', 'layer1', 'layer2'])
 base_parser.add_argument('--keep_feature_prop', type=float,
                          default=1.0, help='Proportion of ResNet features to keep')
+base_parser.add_argument('--random_extractor', action="store_true",
+                         help="Use untrained extractor")

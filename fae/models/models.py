@@ -171,14 +171,18 @@ class FeatureReconstructor(BaseModel):
         super().__init__()
         self.extractor = Extractor(inp_size=config.image_size,
                                    cnn_layers=config.extractor_cnn_layers,
-                                   keep_feature_prop=config.keep_feature_prop)
+                                   keep_feature_prop=config.keep_feature_prop,
+                                   pretrained=not config.random_extractor)
 
         config.in_channels = self.extractor.c_feats
         self.ae = FeatureAutoencoder(config)
 
-        self.loss_fn = SSIMLoss(window_size=5, size_average=False)
-        # self.loss_fn = nn.L1Loss(reduction='none')
-        # self.loss_fn = nn.MSELoss(reduction='none')
+        if config.loss_fn == 'ssim':
+            self.loss_fn = SSIMLoss(window_size=5, size_average=False)
+        elif config.loss_fn == 'mse':
+            self.loss_fn = nn.MSELoss(reduction='none')
+        else:
+            raise ValueError(f"Unknown loss function: {config.loss_fn}")
 
     def forward(self, x: Tensor):
         with torch.no_grad():

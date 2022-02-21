@@ -67,6 +67,8 @@ parser.add_argument('--max_steps', type=int, default=10000,
 # Model settings
 parser.add_argument('--latent_channels', type=int, default=128,
                     help='Number of channels in latent space')
+parser.add_argument('--loss_fn', type=str, default='mse',
+                    help='Loss function to use', choices=['mse', 'ssim'])
 
 args = parser.parse_args()
 

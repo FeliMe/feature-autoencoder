@@ -9,6 +9,8 @@ import wandb
 from torch import Tensor
 from torchvision import models as tv_models
 
+from fae.utils.pytorch_ssim import SSIMLoss
+
 
 VGG16MAPPING = {
     '1': 'relu1_1',
@@ -253,7 +255,7 @@ class Extractor(nn.Module):
 
 class FeatureAE(nn.Module):
     def __init__(self, img_size: int, latent_channels: int,
-                 use_batchnorm: bool = True):
+                 use_batchnorm: bool = True, loss_fn: str = 'mse'):
         super().__init__()
 
         self.extractor = Extractor(featmap_size=img_size)
@@ -292,6 +294,13 @@ class FeatureAE(nn.Module):
         self.encoder = encoder
         self.decoder = decoder
 
+        if loss_fn == 'mse':
+            self.loss_fn = nn.MSELoss(reduction='none')
+        elif loss_fn == 'ssim':
+            self.loss_fn = SSIMLoss(window_size=5, size_average=False)
+        else:
+            raise ValueError(f"Loss function {loss_fn} not supported")
+
     def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         feats = self.extractor(x)
         z = self.encoder(feats)
@@ -300,13 +309,13 @@ class FeatureAE(nn.Module):
 
     def loss(self, x: Tensor):
         feats, rec = self(x)
-        loss = torch.mean((feats - rec) ** 2)
+        loss = self.loss_fn(feats, rec).mean()
         return loss
 
     def predict_anomaly(self, x: Tensor) -> Tensor:
         feats, rec = self.forward(x)
         # Compute anomaly map
-        map_small = torch.mean((feats - rec) ** 2, dim=1, keepdim=True)
+        map_small = self.loss_fn(feats, rec).mean(1, keepdim=True)
         anomaly_map = F.interpolate(map_small, x.shape[-2:], mode='bilinear',
                                     align_corners=True)
         # Anomaly score only where object is detected (i.e. not background)
