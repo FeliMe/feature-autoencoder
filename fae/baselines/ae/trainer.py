@@ -43,12 +43,12 @@ parser.add_argument('--num_workers', type=int,
 
 # Logging settings
 parser.add_argument('--val_frequency', type=int,
-                    default=200, help='Validation frequency')
+                    default=1000, help='Validation frequency')
 parser.add_argument('--val_steps', type=int, default=50,
                     help='Steps per validation')
 parser.add_argument('--log_frequency', type=int,
-                    default=50, help='Logging frequency')
-parser.add_argument('--save_frequency', type=int, default=200,
+                    default=200, help='Logging frequency')
+parser.add_argument('--save_frequency', type=int, default=1000,
                     help='Model checkpointing frequency')
 parser.add_argument('--num_images_log', type=int,
                     default=10, help='Number of images to log')
@@ -63,10 +63,9 @@ parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
 
 # Model settings
 parser.add_argument('--hidden_dims', type=int, nargs='+',
-                    default=[32, 64, 128, 256], help='Autoencoder hidden dimensions')
-parser.add_argument('--latent_dim', type=int, default=128,
+                    default=[16, 32, 64, 128, 256], help='Autoencoder hidden dimensions')
+parser.add_argument('--latent_dim', type=int, default=256,
                     help='Size of the latent space')
-parser.add_argument('--dropout', type=float, default=0.0, help='Dropout rate')
 parser.add_argument('--loss_fn', type=str, default='mse', help='loss function',
                     choices=['l1', 'mse', 'ssim'])
 

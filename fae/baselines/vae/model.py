@@ -4,9 +4,10 @@ from typing import List
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 import wandb
+
+from fae.baselines.vae.vae_utils import normalize, smooth_tensor
 
 
 class Reshape(nn.Module):
@@ -19,7 +20,7 @@ class Reshape(nn.Module):
 
 
 def build_encoder(in_channels: int, hidden_dims: List[int],
-                  use_batchnorm: bool = True, dropout: float = 0.0) -> nn.Module:
+                  use_norm: bool = True) -> nn.Module:
     encoder = nn.Sequential()
     for i, h_dim in enumerate(hidden_dims):
         layer = nn.Sequential()
@@ -30,15 +31,12 @@ def build_encoder(in_channels: int, hidden_dims: List[int],
                                    padding=1, bias=False))
 
         # Batch normalization
-        if use_batchnorm:
-            layer.add_module(f"encoder_batchnorm_{i}", nn.BatchNorm2d(h_dim))
+        if use_norm:
+            layer.add_module(
+                f"encoder_instancenorm_{i}", nn.InstanceNorm2d(h_dim))
 
         # LeakyReLU
         layer.add_module(f"encoder_leakyrelu_{i}", nn.LeakyReLU())
-
-        # Dropout
-        if dropout > 0:
-            layer.add_module(f"encoder_dropout_{i}", nn.Dropout(p=dropout))
 
         # Add layer to encoder
         encoder.add_module(f"encoder_layer_{i}", layer)
@@ -49,40 +47,36 @@ def build_encoder(in_channels: int, hidden_dims: List[int],
 
 
 def build_decoder(out_channels: int, hidden_dims: List[int],
-                  use_batchnorm: bool = True, dropout: float = 0.0) -> nn.Module:
-    h_dims = [out_channels] + hidden_dims
+                  use_norm: bool = True) -> nn.Module:
+
+    h_dims = hidden_dims
 
     dec = nn.Sequential()
     for i in range(len(h_dims) - 1, 0, -1):
         # Add a new layer
         layer = nn.Sequential()
 
-        # Upsample
-        layer.add_module(f"decoder_upsample_{i}", nn.Upsample(scale_factor=2))
-
         # Convolution
         layer.add_module(f"decoder_conv_{i}",
-                         nn.Conv2d(h_dims[i], h_dims[i - 1], kernel_size=3,
-                                   padding=1, bias=False))
+                         nn.ConvTranspose2d(h_dims[i], h_dims[i - 1], stride=2,
+                                            kernel_size=4, padding=1,
+                                            bias=False))
 
         # Batch normalization
-        if use_batchnorm:
-            layer.add_module(f"decoder_batchnorm_{i}",
-                             nn.BatchNorm2d(h_dims[i - 1]))
+        if use_norm:
+            layer.add_module(f"decoder_instancenorm_{i}",
+                             nn.InstanceNorm2d(h_dims[i - 1]))
 
         # LeakyReLU
         layer.add_module(f"decoder_leakyrelu_{i}", nn.LeakyReLU())
-
-        # Dropout
-        if dropout > 0:
-            layer.add_module(f"decoder_dropout_{i}", nn.Dropout2d(dropout))
 
         # Add the layer to the decoder
         dec.add_module(f"decoder_layer_{i}", layer)
 
     # Final layer
     dec.add_module("decoder_conv_final",
-                   nn.Conv2d(h_dims[0], out_channels, 1, bias=False))
+                   nn.ConvTranspose2d(h_dims[0], out_channels, stride=2,
+                                      kernel_size=4, padding=1, bias=False))
 
     return dec
 
@@ -100,15 +94,14 @@ class VAE(nn.Module):
         image_size = config.image_size
         latent_dim = config.latent_dim
         hidden_dims = config.hidden_dims
-        use_batchnorm = config.use_batchnorm if "use_batchnorm" in config else True
-        dropout = config.dropout if "dropout" in config else 0.0
+        use_norm = config.use_norm if "use_norm" in config else False
 
         intermediate_res = image_size // 2 ** len(hidden_dims)
         intermediate_feats = intermediate_res * \
             intermediate_res * hidden_dims[-1]
 
         # Build encoder
-        self.encoder = build_encoder(1, hidden_dims, use_batchnorm, dropout)
+        self.encoder = build_encoder(1, hidden_dims, use_norm)
 
         # Bottleneck
         self.bottleneck = nn.Sequential(
@@ -121,7 +114,7 @@ class VAE(nn.Module):
         )
 
         # Build decoder
-        self.decoder = build_decoder(1, hidden_dims, use_batchnorm, dropout)
+        self.decoder = build_decoder(1, hidden_dims, use_norm)
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
         """
@@ -161,12 +154,15 @@ class VAE(nn.Module):
         rec, mu, logvar = self(inp)
         loss_dict = self.loss_function(inp, rec, mu, logvar)
 
-        # Anomaly map
-        anomaly_map = torch.autograd.grad(outputs=loss_dict['loss'], inputs=inp,
-                                          create_graph=True)[0]
+        # Anomaly map (combi version)
+        rec_err = (inp - rec) ** 2
+        kl_grad = torch.autograd.grad(outputs=loss_dict['kl_loss'], inputs=inp,
+                                      create_graph=True)[0].abs().detach()
+        anomaly_map = rec_err * smooth_tensor(normalize(kl_grad))
+
         inp.requires_grad = False
 
-        # Anomaly score
+        # Anomaly score (kl term)
         anomaly_score = torch.mean(-0.5 *
                                    (1 + logvar - mu ** 2 - logvar.exp()), dim=1)
 
@@ -201,8 +197,8 @@ if __name__ == '__main__':
     # Test VAE
     config = Namespace()
     config.image_size = 128
-    config.latent_dim = 128
-    config.hidden_dims = [32, 64, 128, 256]
+    config.latent_dim = 256
+    config.hidden_dims = [16, 32, 64, 128, 256]
     net = VAE(config)
     print(net)
     x = torch.randn(2, 1, *[config.image_size] * 2)

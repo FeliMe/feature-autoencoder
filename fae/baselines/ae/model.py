@@ -21,7 +21,7 @@ class Reshape(nn.Module):
 
 
 def build_encoder(in_channels: int, hidden_dims: List[int],
-                  use_batchnorm: bool = True, dropout: float = 0.0) -> nn.Module:
+                  use_norm: bool = True) -> nn.Module:
     encoder = nn.Sequential()
     for i, h_dim in enumerate(hidden_dims):
         layer = nn.Sequential()
@@ -32,15 +32,12 @@ def build_encoder(in_channels: int, hidden_dims: List[int],
                                    padding=1, bias=False))
 
         # Batch normalization
-        if use_batchnorm:
-            layer.add_module(f"encoder_batchnorm_{i}", nn.BatchNorm2d(h_dim))
+        if use_norm:
+            layer.add_module(
+                f"encoder_instancenorm_{i}", nn.InstanceNorm2d(h_dim))
 
         # LeakyReLU
         layer.add_module(f"encoder_leakyrelu_{i}", nn.LeakyReLU())
-
-        # Dropout
-        if dropout > 0:
-            layer.add_module(f"encoder_dropout_{i}", nn.Dropout(p=dropout))
 
         # Add layer to encoder
         encoder.add_module(f"encoder_layer_{i}", layer)
@@ -51,40 +48,36 @@ def build_encoder(in_channels: int, hidden_dims: List[int],
 
 
 def build_decoder(out_channels: int, hidden_dims: List[int],
-                  use_batchnorm: bool = True, dropout: float = 0.0) -> nn.Module:
-    h_dims = [out_channels] + hidden_dims
+                  use_norm: bool = True) -> nn.Module:
+
+    h_dims = hidden_dims
 
     dec = nn.Sequential()
     for i in range(len(h_dims) - 1, 0, -1):
         # Add a new layer
         layer = nn.Sequential()
 
-        # Upsample
-        layer.add_module(f"decoder_upsample_{i}", nn.Upsample(scale_factor=2))
-
         # Convolution
         layer.add_module(f"decoder_conv_{i}",
-                         nn.Conv2d(h_dims[i], h_dims[i - 1], kernel_size=3,
-                                   padding=1, bias=False))
+                         nn.ConvTranspose2d(h_dims[i], h_dims[i - 1], stride=2,
+                                            kernel_size=4, padding=1,
+                                            bias=False))
 
         # Batch normalization
-        if use_batchnorm:
-            layer.add_module(f"decoder_batchnorm_{i}",
-                             nn.BatchNorm2d(h_dims[i - 1]))
+        if use_norm:
+            layer.add_module(f"decoder_instancenorm_{i}",
+                             nn.InstanceNorm2d(h_dims[i - 1]))
 
         # LeakyReLU
         layer.add_module(f"decoder_leakyrelu_{i}", nn.LeakyReLU())
-
-        # Dropout
-        if dropout > 0:
-            layer.add_module(f"decoder_dropout_{i}", nn.Dropout2d(dropout))
 
         # Add the layer to the decoder
         dec.add_module(f"decoder_layer_{i}", layer)
 
     # Final layer
     dec.add_module("decoder_conv_final",
-                   nn.Conv2d(h_dims[0], out_channels, 1, bias=False))
+                   nn.ConvTranspose2d(h_dims[0], out_channels, stride=2,
+                                      kernel_size=4, padding=1, bias=False))
 
     return dec
 
@@ -102,15 +95,14 @@ class AE(nn.Module):
         image_size = config.image_size
         latent_dim = config.latent_dim
         hidden_dims = config.hidden_dims
-        use_batchnorm = config.use_batchnorm if "use_batchnorm" in config else True
-        dropout = config.dropout if "dropout" in config else 0.0
+        use_norm = config.use_norm if "use_norm" in config else True
 
         intermediate_res = image_size // 2 ** len(hidden_dims)
         intermediate_feats = intermediate_res * \
             intermediate_res * hidden_dims[-1]
 
         # Build encoder
-        self.encoder = build_encoder(1, hidden_dims, use_batchnorm, dropout)
+        self.encoder = build_encoder(1, hidden_dims, use_norm)
 
         # Bottleneck
         self.bottleneck = nn.Sequential(
@@ -123,7 +115,7 @@ class AE(nn.Module):
         )
 
         # Build decoder
-        self.decoder = build_decoder(1, hidden_dims, use_batchnorm, dropout)
+        self.decoder = build_decoder(1, hidden_dims, use_norm)
 
         # Loss function
         if config.loss_fn == "l1":
