@@ -233,6 +233,7 @@ def compute_dice_at_nfpr(preds: np.ndarray, targets: np.ndarray,
     # Find threshold for 5% FPR
     fpr, _, thresholds = roc_curve(targets.reshape(-1), preds.reshape(-1))
     t = thresholds[max(0, fpr.searchsorted(max_fpr, 'right') - 1)]
+    print(f"Threshold at 5% FPR: {t}")
 
     # Compute Dice
     return compute_dice(np.where(preds > t, 1, 0), targets)

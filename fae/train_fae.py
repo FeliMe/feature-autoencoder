@@ -1,5 +1,4 @@
 import IPython
-from fae.data.data_utils import load_nii_nn, load_segmentation, show
 from argparse import ArgumentParser
 from collections import defaultdict
 from time import time
@@ -15,6 +14,7 @@ from fae.data import datasets
 from fae.models import models
 from fae.utils.utils import seed_everything
 from fae.utils import evaluation
+from fae.data.data_utils import load_nii_nn, load_segmentation, show
 
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
@@ -71,6 +71,37 @@ print(model.ae.dec)
 if config.resume_path is not None:
     print("Loading model from checkpoint...")
     model.load(config.resume_path)
+
+
+#####
+# vpath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_007/BraTS20_Training_007_t1_registered.nii.gz"
+# spath = "/home/felix/datasets/BraTS/MICCAI_BraTS2020_TrainingData/BraTS20_Training_007/anomaly_segmentation.nii.gz"
+# vol = load_nii_nn(vpath, size=config.image_size, equalize_histogram=True)
+# seg = load_segmentation(spath, size=config.image_size)
+
+
+# def process(model, vol, seg, slice):
+#     x = torch.tensor(vol[slice][None])
+#     y = seg[slice]
+#     with torch.no_grad():
+#         feats, rec = model(x.to(config.device))
+#         feats, rec = feats.cpu(), rec.cpu()
+#         res = model.loss_fn(rec, feats).mean(1, keepdim=True)
+#         a = torch.nn.functional.interpolate(
+#             res, size=x.shape[-2:], mode='bilinear', align_corners=True)
+#         a += 1.
+#         a = torch.where(x > 0, a, torch.zeros_like(a))
+
+#     x, y, rec, res, a = x[0, 0], y[0], rec[0], res[0, 0], a[0, 0]
+#     return x.numpy(), y, rec.numpy(), res.numpy(), a.numpy()
+
+
+# x, y, rec, res, a = process(model, vol, seg, slice=45)
+# # show(x, np.where(a > 0.75, a, 0))
+
+# IPython.embed()
+# exit(1)
+#####
 
 
 """"""""""""""""""""""""""""""""" Load data """""""""""""""""""""""""""""""""

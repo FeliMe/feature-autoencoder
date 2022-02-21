@@ -1,5 +1,5 @@
 import os
-from typing import List, Tuple
+from typing import List
 
 import torch
 import torch.nn as nn
@@ -54,7 +54,8 @@ def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int],
 
     # Build encoder
     enc = nn.Sequential()
-    for i, hidden_dim in enumerate(hidden_dims):
+    # for i, hidden_dim in enumerate(hidden_dims):
+    for i in range(len(hidden_dims)):
         # Add a new layer
         layer = nn.Sequential()
 
@@ -64,23 +65,29 @@ def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int],
                                    padding=pad, bias=bias))
 
         # If not last layer
-        if i < len(hidden_dims) - 1:
-            # Normalization
-            if norm_layer is not None:
-                layer.add_module(f"encoder_norm_{i}",
-                                 eval(norm_layer)(hidden_dims[i]))
+        # if i < len(hidden_dims) - 1:
+        # Normalization
+        if norm_layer is not None:
+            layer.add_module(f"encoder_norm_{i}",
+                             eval(norm_layer)(hidden_dims[i]))
 
-            # LeakyReLU
-            layer.add_module(f"encoder_relu_{i}", nn.LeakyReLU())
+        # LeakyReLU
+        layer.add_module(f"encoder_relu_{i}", nn.LeakyReLU())
 
-            # Dropout
-            if dropout > 0:
-                layer.add_module(f"encoder_dropout_{i}", nn.Dropout2d(dropout))
+        # Dropout
+        if dropout > 0:
+            layer.add_module(f"encoder_dropout_{i}", nn.Dropout2d(dropout))
 
         # Add the layer to the encoder
         enc.add_module(f"encoder_layer_{i}", layer)
 
-        in_channels = hidden_dim
+        in_channels = hidden_dims[i]
+
+    # Final layer
+    enc.add_module("encoder_conv_final",
+                   nn.Conv2d(in_channels, in_channels, ks, stride=1, padding=pad,
+                             bias=bias))
+
     return enc
 
 
