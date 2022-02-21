@@ -4,6 +4,8 @@ This repository contains the code to reproduce the experiments from the paper â€
 
 In this work, we propose to combine working in a multi-channel feature space with Structural Similarity loss to significantly improve the localization performance of anomalies that are not necessarily hyperintense.
 
+![Overview of our pipeline (Figure 2 from the paper)](figures/pipeline.png)
+
 # Usage
 
 Download this repository by running
@@ -52,8 +54,6 @@ bash fae/run_comparison.sh
 
 ![Results from running fae/run_comparison.sh (Figure 4 from the paper)](figures/results_main.png)
 
-Results from running fae/run_comparison.sh (Figure 4 from the paper)
-
 To generate the results from Section 4.2 (Ablations), run:
 
 ```bash
@@ -61,5 +61,3 @@ bash fae/run_ablations.sh
 ```
 
 ![Results from running fae/run_ablations.sh (Figure 5 from the paper)](figures/results_ablation.png)
-
-Results from running fae/run_ablations.sh (Figure 5 from the paper)
