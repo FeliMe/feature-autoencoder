@@ -264,11 +264,20 @@ def get_dataloaders(config):
     train_files = get_files(config.train_dataset, config.sequence)
     test_files, test_seg_files = get_files(config.test_dataset, config.sequence)
 
-    # train_files = train_files[:10]
-    # test_files = test_files[:5]
-    print(len(train_files), len(test_files))
+    # Split into validation and test sets
+    val_size = int(len(test_files) * config.val_split)
+    val_files = test_files[:val_size]
+    test_files = test_files[val_size:]
+    val_seg_files = test_seg_files[:val_size]
+    test_seg_files = test_seg_files[val_size:]
+
+    print(f"Found {len(train_files)} training files files")
+    print(f"Found {len(val_files)} validation files files")
+    print(f"Found {len(test_files)} test files files")
 
     train_imgs = np.stack(fae_datasets.load_images(train_files, config))
+    val_imgs = np.concatenate(fae_datasets.load_images(val_files, config))
+    val_segs = np.concatenate(fae_datasets.load_segmentations(val_seg_files, config))
     test_imgs = np.concatenate(fae_datasets.load_images(test_files, config))
     test_segs = np.concatenate(fae_datasets.load_segmentations(test_seg_files, config))
 
@@ -281,11 +290,16 @@ def get_dataloaders(config):
                               batch_size=config.batch_size,
                               shuffle=True,
                               num_workers=config.num_workers)
+    val_loader = DataLoader(fae_datasets.TestDataset(val_imgs, val_segs),
+                            batch_size=config.batch_size,
+                            shuffle=False,
+                            num_workers=config.num_workers)
     test_loader = DataLoader(fae_datasets.TestDataset(test_imgs, test_segs),
                              batch_size=config.batch_size,
                              shuffle=False,
                              num_workers=config.num_workers)
     print(f"Len train_loader: {len(train_loader)}")
+    print(f"Len val_loader: {len(val_loader)}")
     print(f"Len test_loader: {len(test_loader)}")
 
-    return train_loader, test_loader
+    return train_loader, val_loader, test_loader
