@@ -26,7 +26,8 @@ from fae import DATAROOT
 class MRIRegistrator:
     def __init__(
         self,
-        template_path=os.path.join(DATAROOT, 'BrainAtlases/mni_icbm152_nlin_sym_09a/t1.nii'),
+        template_path=os.path.join(
+            DATAROOT, 'BrainAtlases/mni_icbm152_nlin_sym_09a/t1.nii'),
         brain_mask_path=None,
         nbins=32,
         sampling_proportion=None,
@@ -262,7 +263,8 @@ class MRIRegistrator:
 class SitkRegistrator:
     def __init__(
         self,
-        template_path=os.path.join(DATAROOT, 'BrainAtlases/mni_icbm152_nlin_sym_09a/t1.nii')
+        template_path=os.path.join(
+            DATAROOT, 'BrainAtlases/mni_icbm152_nlin_sym_09a/t1.nii')
     ):
         # Load fixed image
         self.FixedImage = sitk.ReadImage(template_path)
@@ -339,7 +341,8 @@ class SitkRegistrator:
         elastixImageFilter.SetMovingImage(img)
 
         # Register moving image
-        elastixImageFilter.SetParameterMap(sitk.GetDefaultParameterMap(transform))
+        elastixImageFilter.SetParameterMap(
+            sitk.GetDefaultParameterMap(transform))
         elastixImageFilter.Execute()
         resImage = elastixImageFilter.GetResultImage()
 
@@ -359,9 +362,12 @@ class SitkRegistrator:
 
 
 if __name__ == '__main__':
-    atlas_path = "/home/felix/datasets/BrainAtlases/mni_icbm152_nlin_sym_09a/mni_icbm152_csf_tal_nlin_sym_09a.nii"
-    img_path = "/home/felix/datasets/WMH/GE3T/100/orig/T1.nii.gz"
-    reg_path = "/home/felix/datasets/reg.nii.gz"
+    import os
+    DATAROOT = os.environ.get('DATAROOT')
+    atlas_path = os.path.join(
+        DATAROOT, "BrainAtlases/mni_icbm152_nlin_sym_09a/mni_icbm152_csf_tal_nlin_sym_09a.nii")
+    img_path = os.path.join(DATAROOT, "WMH/GE3T/100/orig/T1.nii.gz")
+    reg_path = os.path.join(DATAROOT, "reg.nii.gz")
 
     reg = SitkRegistrator(
         template_path=atlas_path,

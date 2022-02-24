@@ -281,7 +281,11 @@ def volume_viewer(volume, initial_position=None, slices_first=True):
 
 
 if __name__ == '__main__':
-    file = "/home/felix/datasets/CamCAN/normal/sub-CC110033/sub-CC110033_T1w_registered_stripped.nii.gz"
+    import os
+    file = os.path.join(
+        os.environ.get('DATAROOT'),
+        "/CamCAN/normal/sub-CC110033/sub-CC110033_T1w_registered_stripped.nii.gz"
+    )
     vol = load_nii_nn(file, size=224)
     print(vol.shape)
     volume_viewer(vol)
