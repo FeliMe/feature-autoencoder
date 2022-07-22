@@ -46,18 +46,17 @@ python3 fae/data/prepare_data.py --dataset BraTS --weighting t1
 
 ## Run Experiments
 
-To generate the results from Section 4.1 (Figure 4, Comparison with the Baselines), run:
+To generate the results from Section 4 (Table 1, MOOD Dataset), run:
+
+```bash
+bash fae/run_mood.sh
+```
+
+To generate the results from Section 4 (Figure 3, Comparison with the Baselines), run:
 
 ```bash
 bash fae/run_comparison.sh
 ```
 
-![Results from running fae/run_comparison.sh (Figure 4 from the paper)](figures/results_main.png)
+![Results from running fae/run_comparison.sh (Figure 3 from the paper)](figures/results_main.png)
 
-To generate the results from Section 4.2 (Ablations), run:
-
-```bash
-bash fae/run_ablations.sh
-```
-
-![Results from running fae/run_ablations.sh (Figure 5 from the paper)](figures/results_ablation.png)
