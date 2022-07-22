@@ -1,6 +1,6 @@
+import os
 from argparse import ArgumentParser
 from collections import defaultdict
-from os.path import dirname
 from time import time
 from warnings import warn
 
@@ -10,6 +10,7 @@ import wandb
 
 from fae import WANDBNAME, WANDBPROJECT
 from fae.baselines.vae.model import VAE
+from fae.configs.base_config import base_parser
 from fae.data.datasets import get_dataloaders
 from fae.utils.utils import seed_everything
 from fae.utils import evaluation
@@ -17,51 +18,20 @@ from fae.utils import evaluation
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
 
-parser = ArgumentParser()
-# General script settings
-parser.add_argument('--seed', type=int, default=42, help='Random seed')
-parser.add_argument('--debug', action='store_true', help='Debug mode')
-parser.add_argument('--no_train', action='store_false', dest='train',
-                    help='Disable training')
-parser.add_argument('--resume_path', type=str,
-                    help='W&B path to checkpoint to resume training from')
-
-# Data settings
-parser.add_argument('--train_dataset', type=str,
-                    default='camcan', help='Training dataset name')
-parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                    choices=['brats'])
-parser.add_argument('--val_split', type=float,
-                    default=0.1, help='Validation fraction')
-parser.add_argument('--image_size', type=int, default=128, help='Image size')
-parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
-parser.add_argument('--slice_range', type=int, nargs='+',
-                    default=(55, 135), help='Lower and Upper slice index')
-parser.add_argument('--normalize', type=bool, default=False,
-                    help='Normalize images between 0 and 1')
-parser.add_argument('--equalize_histogram', type=bool,
-                    default=True, help='Equalize histogram')
-parser.add_argument('--num_workers', type=int,
-                    default=4, help='Number of workers')
-
+parser = ArgumentParser(
+    description="Arguments for training the Feature Autoencoder",
+    parents=[base_parser],
+    conflict_handler='resolve'
+)
 # Logging settings
 parser.add_argument('--val_frequency', type=int,
                     default=1000, help='Validation frequency')
-parser.add_argument('--val_steps', type=int, default=50,
-                    help='Steps per validation')
 parser.add_argument('--log_frequency', type=int,
                     default=200, help='Logging frequency')
 parser.add_argument('--save_frequency', type=int, default=1000,
                     help='Model checkpointing frequency')
-parser.add_argument('--num_images_log', type=int,
-                    default=10, help='Number of images to log')
 
 # Hyperparameters
-parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
-parser.add_argument('--weight_decay', type=float,
-                    default=0.0, help='Weight decay')
-parser.add_argument('--max_steps', type=int, default=10000,
-                    help='Number of training steps')
 parser.add_argument('--batch_size', type=int, default=64, help='Batch size')
 parser.add_argument('--kl_weight', type=float, default=0.05,
                     help='Weight of KL loss')  # Very sensitive to this param, 0.05
@@ -71,7 +41,6 @@ parser.add_argument('--hidden_dims', type=int, nargs='+',
                     default=[16, 32, 64, 128, 256], help='Autoencoder hidden dimensions')
 parser.add_argument('--latent_dim', type=int, default=256,
                     help='Size of the latent space')
-
 args = parser.parse_args()
 
 if not args.train and args.resume_path is None:
@@ -82,9 +51,11 @@ args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 args.method = "VAE"
 
+wandb_dir = f"{os.path.expanduser('~')}/wandb/fae/{args.method}"
+os.makedirs(wandb_dir, exist_ok=True)
 wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=args,
            mode="disabled" if args.debug else "online",
-           dir=dirname(dirname(dirname(__file__))))
+           dir=wandb_dir)
 config = wandb.config
 
 
@@ -196,6 +167,7 @@ def val_step(model, x, device):
     model.eval()
     x = x.to(device)
     anomaly_map, anomaly_score, rec, loss_dict = model.predict_anomaly(x)
+    x = x.cpu()
     return loss_dict, anomaly_map.cpu(), anomaly_score.cpu(), rec.cpu()
 
 
@@ -299,8 +271,8 @@ def test(model, test_loader, device, config):
     log_msg += f"pixel-wise AUROC: {pixel_auroc:.4f}\n"
     log_msg += f"IoU @ 5% fpr: {iou_at_5fpr:.4f} - "
     log_msg += f"Dice @ 5% fpr: {dice_at_5fpr:.4f}\n"
-    log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
     log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
+    log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
     log_msg += f"Average positive label: {torch.tensor(segs).float().mean():.4f}\n"
     print(log_msg)
 

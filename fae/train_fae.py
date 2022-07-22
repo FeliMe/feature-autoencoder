@@ -1,3 +1,4 @@
+import os
 from argparse import ArgumentParser
 from collections import defaultdict
 from time import time
@@ -7,7 +8,7 @@ import numpy as np
 import torch
 import wandb
 
-from fae import WANDBNAME, WANDBPROJECT
+from fae import WANDBNAME, WANDBPROJECT, WANDBDIR
 from fae.configs.base_config import base_parser
 from fae.data import datasets
 from fae.models import models
@@ -19,25 +20,20 @@ from fae.utils import evaluation
 
 parser = ArgumentParser(
     description="Arguments for training the Feature Autoencoder",
-    parents=[base_parser]
+    parents=[base_parser],
+    conflict_handler='resolve'
 )
+config = parser.parse_args()
+config.method = "FAE"
 
-args = parser.parse_args()
-
-args.method = "FAE"
-
-if not args.train and args.resume_path is None:
+if not config.train and config.resume_path is None:
     warn("Testing untrained model")
 
 # Select training device
-args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=args,
-           mode="disabled" if args.debug else "online")
-config = wandb.config
+config.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-""""""""""""""""""""""""""""""" Reproducability """""""""""""""""""""""""""""""
+""""""""""""""""""""""""""""""" Reproducibility """""""""""""""""""""""""""""""
 seed_everything(config.seed)
 
 
@@ -55,8 +51,6 @@ def get_model(config):
 
 print("Initializing model...")
 model = get_model(config).to(config.device)
-# Track model with w&b
-wandb.watch(model)
 
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
@@ -78,6 +72,16 @@ t_load_data_start = time()
 train_loader, val_loader, test_loader = datasets.get_dataloaders(config)
 print(f'Loaded {config.train_dataset} and {config.test_dataset} in '
       f'{time() - t_load_data_start:.2f}s')
+
+
+""""""""""""""""""""""""""""""""""""" W&B """""""""""""""""""""""""""""""""""""
+
+wandb_dir = f"{WANDBDIR}/fae/{config.method}"
+os.makedirs(wandb_dir, exist_ok=True)
+wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=config,
+           mode="disabled" if config.debug else "online",
+           dir=wandb_dir)
+wandb.watch(model)
 
 
 """"""""""""""""""""""""""""""""""" Training """""""""""""""""""""""""""""""""""
@@ -242,7 +246,6 @@ def test(model, test_loader, config):
     anomaly_maps = torch.cat(anomaly_maps).numpy()
     segs = torch.cat(segs).numpy()
     pixel_ap = evaluation.compute_average_precision(anomaly_maps, segs)
-    pixel_auroc = evaluation.compute_auroc(anomaly_maps, segs)
     iou_at_5fpr = evaluation.compute_iou_at_nfpr(anomaly_maps, segs,
                                                  max_fpr=0.05)
     dice_at_5fpr = evaluation.compute_dice_at_nfpr(anomaly_maps, segs,
@@ -252,12 +255,12 @@ def test(model, test_loader, config):
     print("\nTest results:")
     log_msg = " - ".join([f'val {k}: {np.mean(v):.4f}' for k,
                          v in val_losses.items()])
-    log_msg += f"\npixel-wise average precision: {pixel_ap:.4f} - "
-    log_msg += f"pixel-wise AUROC: {pixel_auroc:.4f}\n"
+    log_msg += f"\nanomaly-score min/max: {anomaly_scores.min():.4f}/{anomaly_scores.max():.4f}"
+    log_msg += f"\npixel-wise average precision: {pixel_ap:.4f}\n"
     log_msg += f"IoU @ 5% fpr: {iou_at_5fpr:.4f} - "
     log_msg += f"Dice @ 5% fpr: {dice_at_5fpr:.4f}\n"
-    log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
     log_msg += f"sample-wise AUROC: {sample_auroc:.4f} - "
+    log_msg += f"sample-wise average precision: {sample_ap:.4f} - "
     log_msg += f"Average positive pixel: {torch.tensor(segs).float().mean():.4f}\n"
     log_msg += f"Average positive label: {torch.tensor(labels).float().mean():.4f}\n"
     print(log_msg)
@@ -268,7 +271,6 @@ def test(model, test_loader, config):
     }, step=config.max_steps + 1)
     wandb.log({
         'val/pixel-ap': pixel_ap,
-        'val/pixel-auroc': pixel_auroc,
         'val/sample-ap': sample_ap,
         'val/sample-auroc': sample_auroc,
         'val/iou-at-5fpr': iou_at_5fpr,

@@ -1,8 +1,8 @@
 import multiprocessing
 import os
 from time import time
+from typing import List, Optional
 
-import SimpleITK as sitk
 from dipy.align.imaffine import AffineMap
 from dipy.align.imaffine import (
     AffineRegistration,
@@ -18,7 +18,6 @@ from dipy.viz import regtools
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
-from tqdm import tqdm
 
 from fae import DATAROOT
 
@@ -26,15 +25,15 @@ from fae import DATAROOT
 class MRIRegistrator:
     def __init__(
         self,
-        template_path=os.path.join(
+        template_path: str = os.path.join(
             DATAROOT, 'BrainAtlases/mni_icbm152_nlin_sym_09a/t1.nii'),
-        brain_mask_path=None,
-        nbins=32,
-        sampling_proportion=None,
-        level_iters=[100, 10, 5],
-        sigmas=[3.0, 1.0, 1.0],
-        factors=[4, 2, 1],
-        verbose=False
+        brain_mask_path: Optional[str] = None,
+        nbins: int = 32,
+        sampling_proportion: Optional[int] = None,
+        level_iters: List[int] = [100, 10, 5],
+        sigmas: List[float] = [3.0, 1.0, 1.0],
+        factors: List[int] = [4, 2, 1],
+        verbose: bool = False
     ):
         """Class for a registrator to perform an affine registration based on
         mutual information with dipy.
@@ -80,11 +79,11 @@ class MRIRegistrator:
             print(str)
 
     @staticmethod
-    def save_nii(f, img, affine, dtype):
+    def save_nii(f, img: np.ndarray, affine: np.ndarray, dtype: str):
         nib.save(nib.Nifti1Image(img.astype(dtype), affine), f)
 
     @staticmethod
-    def load_nii(path, dtype='short'):
+    def load_nii(path: str, dtype: str = 'short'):
         # Load file
         data = nib.load(path, keep_file_open=False)
         volume = data.get_fdata(caching='unchanged',
@@ -93,7 +92,7 @@ class MRIRegistrator:
         return volume, affine
 
     @staticmethod
-    def overlay(template, moving, transformer=None):
+    def overlay(template: np.ndarray, moving: np.ndarray, transformer=None):
         # Matplotlib params
         plt.rcParams['image.cmap'] = 'gray'
         plt.rcParams['image.interpolation'] = 'nearest'
@@ -112,7 +111,7 @@ class MRIRegistrator:
         """Transform a scan given a transformation and save it.
 
         Args:
-            path (str): Path to scan
+            img (np.ndarray): Scan
             save_path (str): Path so save transformed scan
             transformation (AffineMap): Affine transformation map
             affine
@@ -137,46 +136,33 @@ class MRIRegistrator:
             dtype=dtype
         )
 
-    def register_batch(self, moving_list, num_cpus=None):
+    def register_batch(self, files: List[str],
+                       num_cpus: int = min(12, os.cpu_count())):
         """Register a list of NiFTI files and save the registration result
         with a '_registered.nii' suffix"""
 
-        # Set number of cpus used
-        num_cpus = os.cpu_count() if num_cpus is None else num_cpus
-
-        # Split list into batches
-        moving_batches = [list(p) for p in np.array_split(
-            moving_list, num_cpus) if len(p) > 0]
-        print(f"Using {len(moving_batches)} CPU cores for registration")
-
-        # Start multiprocessing
         with multiprocessing.Pool(processes=num_cpus) as pool:
-            temp = pool.starmap(
-                self._register_batch,
-                zip(moving_batches, range(len(moving_batches)))
+            results = pool.starmap(
+                self._register,
+                zip(files, range(len(files)))
             )
 
         transformations = {}
-        for t in temp:
-            transformations = {**transformations, **t}
+        for r in results:
+            transformations = {**transformations, **r}
 
         return transformations
 
-    def _register_batch(self, moving_list, i_process):
+    def _register(self, path: str, i_process: int):
         """Don't call yourself"""
-        t_start = time()
-        transformations = {}
-        for i, path in enumerate(moving_list):
-            save_path = path.split('nii')[0][:-1] + '_registered.nii'
-            if path.endswith('.gz'):
-                save_path += '.gz'
-            _, transformation = self(moving=path, save_path=save_path)
+        start = time()
+        save_path = path.split('nii')[0][:-1] + '_registered.nii'
+        if path.endswith('.gz'):
+            save_path += '.gz'
+        _, transformation = self(moving=path, save_path=save_path)
+        print(f"Scan {i_process} done in {time() - start:.02f}s")
 
-            transformations[path] = transformation
-
-            print(f"Process {i_process} finished {i + 1} of"
-                  f" {len(moving_list)} in {time() - t_start:.2f}s")
-        return transformations
+        return {save_path: transformation}
 
     def __call__(self, moving, moving_affine=None, save_path=None, show=False):
         """Register a scan
@@ -260,107 +246,6 @@ class MRIRegistrator:
         return registered, transformation
 
 
-class SitkRegistrator:
-    def __init__(
-        self,
-        template_path=os.path.join(
-            DATAROOT, 'BrainAtlases/mni_icbm152_nlin_sym_09a/t1.nii')
-    ):
-        # Load fixed image
-        self.FixedImage = sitk.ReadImage(template_path)
-
-    def register_batch(self, moving_list):
-        """Register a list of files"""
-        transformations = {}
-        for path in tqdm(moving_list):
-            save_path = path.split('nii')[0][:-1] + '_registered.nii'
-            if path.endswith('.gz'):
-                save_path += '.gz'
-            _, transformation = self(path, save_path=save_path)
-
-            transformations[path] = transformation
-        return transformations
-
-    @staticmethod
-    def transform(img, transformParameterMap, save_path=None):
-        """Transform an image based on a known transformation
-
-        Args:
-            img (str or SimpleITK.SimpleITK.Image): Moving image
-            transformParameterMap (SimpleITK.SimpleITK.ParameterMap)
-            save_path (None or str): Rath to save transformed image
-
-        Returns:
-            resImage (SimpleITK.SimpleITK.Image): Transformed image
-        """
-        if isinstance(img, str):
-            img = sitk.ReadImage(img)
-
-        # Define transformation object
-        transformixImageFilter = sitk.TransformixImageFilter()
-        transformixImageFilter.SetTransformParameterMap(transformParameterMap)
-
-        # Turn logging to console off
-        transformixImageFilter.LogToConsoleOff()
-
-        # Transform moving image
-        transformixImageFilter.SetMovingImage(img)
-        transformixImageFilter.Execute()
-        resImage = transformixImageFilter.GetResultImage()
-
-        # Save maybe
-        if save_path is not None:
-            sitk.WriteImage(resImage, save_path)
-
-        return resImage
-
-    def __call__(self, img, save_path=None, transform="affine"):
-        """Transform an image based on a fixed atlas
-
-        Args:
-            img (str or SimpleITK.SimpleITK.Image): Moving image
-            save_path (None or str): Rath to save transformed image
-            transform (str): Type of transformation
-
-        Returns:
-            resImage (SimpleITK.SimpleITK.Image): Transformed image
-            transformParameterMap (SimpleITK.SimpleITK.ParameterMap)
-        """
-        # Select registration method
-        elastixImageFilter = sitk.ElastixImageFilter()
-
-        # Turn logging to console off
-        elastixImageFilter.LogToConsoleOff()
-
-        # Set fixed image
-        elastixImageFilter.SetFixedImage(self.FixedImage)
-
-        # Set moving image
-        if isinstance(img, str):
-            img = sitk.ReadImage(img)
-        elastixImageFilter.SetMovingImage(img)
-
-        # Register moving image
-        elastixImageFilter.SetParameterMap(
-            sitk.GetDefaultParameterMap(transform))
-        elastixImageFilter.Execute()
-        resImage = elastixImageFilter.GetResultImage()
-
-        # Save maybe
-        if save_path is not None:
-            # Determine dtype
-            short_img = sitk.GetArrayFromImage(sitk.Cast(img, sitk.sitkInt16))
-            if np.abs(sitk.GetArrayFromImage(img) - short_img).sum() == 0:
-                img = sitk.Cast(img, sitk.sitkInt16)
-            # Write
-            sitk.WriteImage(resImage, save_path)
-
-        # Get transforms
-        transformParameterMap = elastixImageFilter.GetTransformParameterMap()
-
-        return resImage, transformParameterMap
-
-
 if __name__ == '__main__':
     import os
     DATAROOT = os.environ.get('DATAROOT')
@@ -369,7 +254,7 @@ if __name__ == '__main__':
     img_path = os.path.join(DATAROOT, "WMH/GE3T/100/orig/T1.nii.gz")
     reg_path = os.path.join(DATAROOT, "reg.nii.gz")
 
-    reg = SitkRegistrator(
+    reg = MRIRegistrator(
         template_path=atlas_path,
     )
     reg(img_path, reg_path)

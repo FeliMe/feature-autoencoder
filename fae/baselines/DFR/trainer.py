@@ -1,5 +1,5 @@
+import os
 from argparse import ArgumentParser
-from os.path import dirname
 from time import time
 from warnings import warn
 
@@ -9,6 +9,7 @@ import wandb
 
 from fae import WANDBNAME, WANDBPROJECT
 from fae.baselines.DFR.model import Extractor, FeatureAE
+from fae.configs.base_config import base_parser
 from fae.data.datasets import get_dataloaders
 from fae.utils.utils import seed_everything
 from fae.utils import evaluation
@@ -17,59 +18,18 @@ from fae.baselines.DFR.dfr_utils import estimate_latent_channels
 
 """"""""""""""""""""""""""""""""""" Config """""""""""""""""""""""""""""""""""
 
-parser = ArgumentParser()
-# General script settings
-parser.add_argument('--seed', type=int, default=42, help='Random seed')
-parser.add_argument('--debug', action='store_true', help='Debug mode')
-parser.add_argument('--no_train', action='store_false', dest='train',
-                    help='Disable training')
-parser.add_argument('--resume_path', type=str,
-                    help='W&B path to checkpoint to resume training from')
-
-# Data settings
-parser.add_argument('--train_dataset', type=str,
-                    default='camcan', help='Training dataset name')
-parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                    choices=['brats'])
-parser.add_argument('--val_split', type=float,
-                    default=0.1, help='Validation fraction')
-parser.add_argument('--image_size', type=int, default=128, help='Image size')
-parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
-parser.add_argument('--slice_range', type=int, nargs='+',
-                    default=(55, 135), help='Lower and Upper slice index')
-parser.add_argument('--normalize', type=bool, default=False,
-                    help='Normalize images between 0 and 1')
-parser.add_argument('--equalize_histogram', type=bool,
-                    default=True, help='Equalize histogram')
-parser.add_argument('--num_workers', type=int,
-                    default=4, help='Number of workers')
-
-# Logging settings
-parser.add_argument('--val_frequency', type=int,
-                    default=200, help='Validation frequency')
-parser.add_argument('--val_steps', type=int, default=50,
-                    help='Steps per validation')
-parser.add_argument('--log_frequency', type=int,
-                    default=50, help='Logging frequency')
-parser.add_argument('--save_frequency', type=int, default=200,
-                    help='Model checkpointing frequency')
-parser.add_argument('--num_images_log', type=int,
-                    default=10, help='Number of images to log')
-
+parser = ArgumentParser(
+    description="Arguments for training the Feature Autoencoder",
+    parents=[base_parser],
+    conflict_handler='resolve'
+)
 # Hyperparameters
-parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
-parser.add_argument('--weight_decay', type=float,
-                    default=0.0, help='Weight decay')
 parser.add_argument('--batch_size', type=int, default=4, help='Batch size')
-parser.add_argument('--max_steps', type=int, default=10000,
-                    help='Number of training steps')
-
 # Model settings
 parser.add_argument('--latent_channels', type=int, default=128,
                     help='Number of channels in latent space')
 parser.add_argument('--loss_fn', type=str, default='mse',
                     help='Loss function to use', choices=['mse', 'ssim'])
-
 args = parser.parse_args()
 
 args.method = "DFR"
@@ -80,9 +40,11 @@ args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 if not args.train and args.resume_path is None:
     warn("Testing untrained model")
 
+wandb_dir = f"{os.path.expanduser('~')}/wandb/fae/{args.method}"
+os.makedirs(wandb_dir, exist_ok=True)
 wandb.init(project=WANDBPROJECT, entity=WANDBNAME, config=args,
            mode="disabled" if args.debug else "online",
-           dir=dirname(dirname(dirname(__file__))))
+           dir=wandb_dir)
 config = wandb.config
 
 
@@ -130,9 +92,7 @@ model = FeatureAE(
 # Init optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=config.lr,
                              weight_decay=config.weight_decay)
-# Print model
-print(model.encoder)
-print(model.decoder)
+print(model)
 
 if config.resume_path is not None:
     print("Loading model from checkpoint...")
@@ -206,7 +166,10 @@ def val_step(model, x, device):
     x = x.to(device)
     with torch.no_grad():
         anomaly_map, anomaly_score, loss = model.predict_anomaly(x)
-    return loss.item(), anomaly_map.cpu(), anomaly_score.cpu()
+        anomaly_map = anomaly_map.cpu()
+        anomaly_score = anomaly_score.cpu()
+    x = x.cpu()
+    return loss.item(), anomaly_map, anomaly_score
 
 
 def validate(model, val_loader, device, i_iter):

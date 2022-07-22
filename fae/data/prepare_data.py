@@ -259,8 +259,7 @@ def prepare_data(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dataset', type=str, required=True,
-                        choices=['CamCAN', 'BraTS'])
+    parser.add_argument('--dataset', type=str, required=True)
     parser.add_argument('--force_download', action='store_true')
     parser.add_argument('--force_split', action='store_true')
     parser.add_argument('--dataset_path', default=None)

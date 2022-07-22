@@ -13,5 +13,5 @@ __pycache__/
 # w&b files and directories
 wandb/
 
-# Tester file
 /fae/tester.py
+/fae/slurm_run.sh

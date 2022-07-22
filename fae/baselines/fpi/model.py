@@ -152,8 +152,9 @@ class WideResNetAE(nn.Module):
         """
         name = os.path.basename(path)
         run_path = os.path.dirname(path)
-        weights = wandb.restore(name, run_path=run_path)
+        weights = wandb.restore(name, run_path=run_path, root="/tmp", replace=True)
         self.load_state_dict(torch.load(weights.name))
+        os.remove(weights.name)
 
     def save(self, name: str):
         torch.save(self.state_dict(), os.path.join(wandb.run.dir, name))

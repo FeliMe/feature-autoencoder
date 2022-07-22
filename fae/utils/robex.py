@@ -2,12 +2,14 @@ import multiprocessing
 import numpy as np
 import os
 import subprocess
+from typing import List, Optional
 
 from fae import DATAROOT
 from time import time
 
 
-def strip_skull_ROBEX(paths, out_dir=None, num_cpus=None):
+def strip_skull_ROBEX(paths, out_dir: Optional[str] = None,
+                      num_processes: Optional[int] = min(24, os.cpu_count())):
     """Use ROBEX to strip the skull of a T1 weighted brain MR Image. Takes ~100s
 
     DOES NOT WORK PROPERLY FOR T2 WEIGHTED IMAGES
@@ -16,22 +18,21 @@ def strip_skull_ROBEX(paths, out_dir=None, num_cpus=None):
         paths (str or list of str)
         out_dir (str): output directory to save the results. If None, same as
                        input directory is used
+        num_processes (int): Number of threads for multiprocessing
     """
 
     # Check if robex is installed
     if not os.path.exists(os.path.join(DATAROOT, 'ROBEX/runROBEX.sh')):
-        raise RuntimeError(f"ROBEX not found at {os.path.join(DATAROOT, 'ROBEX/runROBEX.sh')}, "
-                           "download and install it from "
-                           "https://www.nitrc.org/projects/robex")
+        raise RuntimeError(
+            f"ROBEX not found at {os.path.join(DATAROOT, 'ROBEX/runROBEX.sh')},"
+            " download and install it from https://www.nitrc.org/projects/robex"
+        )
 
     if isinstance(paths, str):
         paths = [paths]
 
-    # Set number of cpus used
-    num_cpus = min(os.cpu_count(), 24) if num_cpus is None else num_cpus
-
     # Split list into batches
-    batches = [list(p) for p in np.array_split(paths, num_cpus) if len(p) > 0]
+    batches = [list(p) for p in np.array_split(paths, num_processes) if len(p) > 0]
     print(f"Skull stripping is using {len(batches)} cpu cores")
 
     # Start multiprocessing
@@ -41,7 +42,8 @@ def strip_skull_ROBEX(paths, out_dir=None, num_cpus=None):
         p.start()
 
 
-def _strip_skull_ROBEX(paths, i_process, out_dir=None):
+def _strip_skull_ROBEX(paths: List[str], i_process: int,
+                       out_dir: Optional[str] = None):
     """Don't call this function yourself"""
     robex = os.path.join(DATAROOT, 'ROBEX/runROBEX.sh')
 

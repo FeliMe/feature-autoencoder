@@ -11,17 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 
 import fae.data.datasets as fae_datasets
-
-
-def show(img):
-    import matplotlib.pyplot as plt
-    if img.ndim == 4:
-        from torchvision.utils import make_grid
-        img = make_grid(torch.tensor(img), nrow=8, padding=2)
-    if img.ndim == 3:
-        img = img[0]
-    plt.imshow(img, cmap='gray')
-    plt.show()
+from fae.data.artificial_anomalies import create_artificial_anomalies
 
 
 def sample_location(img: np.ndarray, core_percent: float = 0.8) -> np.ndarray:
@@ -264,27 +254,40 @@ def get_dataloaders(config):
     train_files = get_files(config.train_dataset, config.sequence)
     test_files, test_seg_files = get_files(config.test_dataset, config.sequence)
 
-    # Split into validation and test sets
-    val_size = int(len(test_files) * config.val_split)
-    val_files = test_files[:val_size]
-    test_files = test_files[val_size:]
-    val_seg_files = test_seg_files[:val_size]
-    test_seg_files = test_seg_files[val_size:]
-
     print(f"Found {len(train_files)} training files files")
-    print(f"Found {len(val_files)} validation files files")
     print(f"Found {len(test_files)} test files files")
 
-    train_imgs = np.stack(fae_datasets.load_images(train_files, config))
-    val_imgs = np.concatenate(fae_datasets.load_images(val_files, config))
-    val_segs = np.concatenate(fae_datasets.load_segmentations(val_seg_files, config))
+    print("Loading images...")
+    if not config.train:
+        train_imgs = np.random.randn(1000, 1, 128, 128)
+    else:
+        train_imgs = np.stack(fae_datasets.load_images(train_files, config))
     test_imgs = np.concatenate(fae_datasets.load_images(test_files, config))
-    test_segs = np.concatenate(fae_datasets.load_segmentations(test_seg_files, config))
 
-    # Shuffle test data
-    perm = np.random.permutation(len(test_imgs))
-    test_imgs = test_imgs[perm]
-    test_segs = test_segs[perm]
+    if "mood" in config.test_dataset:
+        print("Creating artificial anomalies...")
+        test_imgs, test_segs = create_artificial_anomalies(
+            test_imgs, config.anomaly_name, radius_range=config.anomaly_size)
+    else:
+        print("Loading segmentations...")
+        test_segs = np.concatenate(
+            fae_datasets.load_segmentations(test_seg_files, config))
+
+    # Split into validation and test sets
+    val_size = int(len(test_imgs) * config.val_split)
+    val_imgs = test_imgs[:val_size]
+    test_imgs = test_imgs[val_size:]
+    val_segs = test_segs[:val_size]
+    test_segs = test_segs[val_size:]
+
+    # Shuffle validation and test data
+    val_perm = np.random.permutation(len(val_imgs))
+    val_imgs = val_imgs[val_perm]
+    val_segs = val_segs[val_perm]
+
+    test_perm = np.random.permutation(len(test_imgs))
+    test_imgs = test_imgs[test_perm]
+    test_segs = test_segs[test_perm]
 
     train_loader = DataLoader(PatchSwapDataset(train_imgs, interp_fn=eval(config.interp_fn)),
                               batch_size=config.batch_size,

@@ -12,9 +12,9 @@ base_parser.add_argument('--resume_path', type=str,
 
 # Data settings
 base_parser.add_argument('--train_dataset', type=str,
-                         default='camcan', help='Training dataset name')
-base_parser.add_argument('--test_dataset', type=str, default='brats',
-                         help='Test dataset name')
+                         default='mood_train', help='Training dataset name')  # camcan
+base_parser.add_argument('--test_dataset', type=str, default='mood_val_test',
+                         help='Test dataset name')  # brats
 base_parser.add_argument('--val_split', type=float,
                          default=0.1, help='Validation fraction')
 base_parser.add_argument('--sequence', type=str,
@@ -30,7 +30,9 @@ base_parser.add_argument('--normalize', type=bool,
 base_parser.add_argument('--equalize_histogram', type=bool,
                          default=True, help='Equalize histogram')
 base_parser.add_argument('--anomaly_size', type=int,
-                         nargs='+', default=(55, 135), help='Anomaly size')
+                         nargs='+', default=(10, 20),
+                         help='size of artificial anomalies')
+base_parser.add_argument('--anomaly_name', type=str)  # 'source_deformation', or 'sink_deformation'
 
 # Logging settings
 base_parser.add_argument('--val_frequency', type=int,
@@ -45,8 +47,7 @@ base_parser.add_argument('--num_images_log', type=int,
                          default=10, help='Number of images to log')
 
 # Hyperparameters
-base_parser.add_argument(
-    '--lr', type=float, default=2e-4, help='Learning rate')
+base_parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
 base_parser.add_argument('--weight_decay', type=float,
                          default=0.0, help='Weight decay')
 base_parser.add_argument('--max_steps', type=int,
@@ -60,12 +61,15 @@ base_parser.add_argument('--model', type=str, default='FeatureReconstructor',
 base_parser.add_argument('--loss_fn', type=str, default='ssim',
                          choices=['ssim', 'mse'], help='Loss function')
 base_parser.add_argument('--hidden_dims', type=int, nargs='+',
-                         default=[100, 150, 200, 300], help='Autoencoder hidden dimensions')
+                         default=[100, 150, 200, 300],
+                         help='Autoencoder hidden dimensions')
 base_parser.add_argument('--dropout', type=float,
                          default=0.1, help='Dropout rate')
 base_parser.add_argument('--extractor_cnn_layers',
-                         type=str, nargs='+', default=['layer0', 'layer1', 'layer2'])
+                         type=str, nargs='+',
+                         default=['layer0', 'layer1', 'layer2'])
 base_parser.add_argument('--keep_feature_prop', type=float,
-                         default=1.0, help='Proportion of ResNet features to keep')
+                         default=1.0,
+                         help='Proportion of ResNet features to keep')
 base_parser.add_argument('--random_extractor', action="store_true",
                          help="Use untrained extractor")

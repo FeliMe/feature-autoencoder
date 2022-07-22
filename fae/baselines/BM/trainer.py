@@ -3,13 +3,14 @@ Implementation of the Baseline Model from:
 'Simple statistical methods for unsupervised brain anomaly detection on MRI are competitive to deep learning methods'
 https://arxiv.org/pdf/2011.12735.pdf
 """
-import argparse
+from argparse import ArgumentParser
 from functools import partial
 from typing import Tuple
 
 import numpy as np
-import torch
 
+from fae.data.artificial_anomalies import create_artificial_anomalies
+from fae.configs.base_config import base_parser
 from fae.data.datasets import get_files
 from fae.data.data_utils import load_files_to_ram, load_nii_nn, load_segmentation
 from fae.utils import evaluation
@@ -17,29 +18,12 @@ from fae.utils.utils import seed_everything
 
 
 """ Config """
-parser = argparse.ArgumentParser()
-
-# General settings
-parser.add_argument("--seed", type=int, default=42, help='Random seed')
-
-# Data settings
-parser.add_argument('--train_dataset', type=str,
-                    default='camcan', help='Training dataset name')
-parser.add_argument('--test_dataset', type=str, default='brats', help='Test dataset name',
-                    choices=['brats'])
-parser.add_argument('--val_split', type=float,
-                    default=0.1, help='Validation fraction')
-parser.add_argument('--image_size', type=int, default=128, help='Image size')
-parser.add_argument('--sequence', type=str, default='t1', help='MRI sequence')
+parser = ArgumentParser(
+    description="Arguments for training the Autoencoder baseline",
+    parents=[base_parser],
+    conflict_handler='resolve'
+)
 parser.add_argument('--return_volumes', type=bool, default=True)
-parser.add_argument('--slice_range', type=int, nargs='+',
-                    default=(55, 135), help='Lower and Upper slice index')
-parser.add_argument('--normalize', type=bool, default=False,
-                    help='Normalize images between 0 and 1')
-parser.add_argument('--equalize_histogram', type=bool,
-                    default=True, help='Equalize histogram')
-parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
-
 config = parser.parse_args()
 
 config.method = "BM"
@@ -73,7 +57,8 @@ def get_test_volumes(config):
 
     val_size = int(len(files) * config.val_split)
     files = files[val_size:]
-    seg_files = seg_files[val_size:]
+    if "mood" not in config.test_dataset:
+        seg_files = seg_files[val_size:]
 
     # Load all files
     volumes = load_files_to_ram(
@@ -86,12 +71,23 @@ def get_test_volumes(config):
     )
 
     # Load all files
-    seg_volumes = load_files_to_ram(
-        seg_files,
-        partial(load_segmentation,
-                size=config.image_size,
-                slice_range=config.slice_range if 'slice_range' in config else None)
-    )
+    if "mood" in config.test_dataset:
+        volumes_ = []
+        seg_volumes = []
+        for volume in volumes:
+            vol, seg_vol = create_artificial_anomalies(
+                volume, config.anomaly_name, radius_range=config.anomaly_size)
+            volumes_.append(vol)
+            seg_volumes.append(seg_vol)
+        volumes = volumes_
+    else:
+        print("Loading segmentations...")
+        seg_volumes = load_files_to_ram(
+            seg_files,
+            partial(load_segmentation,
+                    size=config.image_size,
+                    slice_range=config.slice_range if 'slice_range' in config else None)
+        )
 
     if "return_volumes" in config and config.return_volumes:
         imgs = np.stack(volumes, axis=0)[:, :, 0]
@@ -152,8 +148,8 @@ def evaluate_pixel(anomaly_maps: np.ndarray, targets: np.ndarray) -> None:
     dice_at_5fpr = evaluation.compute_dice_at_nfpr(anomaly_maps, targets,
                                                    max_fpr=0.05)
 
-    print(f"Pixel-wise AP: {np.mean(pixel_ap):.4f}")
     print(f"Pixel-wise AUROC: {np.mean(pixel_auroc):.4f}")
+    print(f"Pixel-wise AP: {np.mean(pixel_ap):.4f}")
     print(f"Pixel-wise IoU at 5 % FPR: {np.mean(iou_at_5fpr):.4f}")
     print(f"Pixel-wise Dice at 5 % FPR: {np.mean(dice_at_5fpr):.4f}")
 

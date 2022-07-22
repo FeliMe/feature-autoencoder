@@ -10,12 +10,14 @@ from torch.utils.data import Dataset, DataLoader
 from fae import (
     CAMCANROOT,
     BRATSROOT,
+    MOODROOT,
 )
 from fae.data.data_utils import (
     load_files_to_ram,
     load_nii_nn,
     load_segmentation,
 )
+from fae.data.artificial_anomalies import create_artificial_anomalies
 
 
 def get_camcan_files(path: str = CAMCANROOT, sequence: str = "t1") -> List[str]:
@@ -26,13 +28,14 @@ def get_camcan_files(path: str = CAMCANROOT, sequence: str = "t1") -> List[str]:
     Returns:
         files (List[str]): List of files
     """
-    files = glob(os.path.join(path, 'normal/*/',
-                              f'*{sequence.upper()}w_stripped_registered.nii.gz'))
+    files = glob(os.path.join(
+        path, f'normal/*/*{sequence.upper()}w_stripped_registered.nii.gz'))
     assert len(files) > 0, "No files found in CamCAN"
     return files
 
 
-def get_brats_files(path: str = BRATSROOT, sequence: str = "t1") -> Tuple[List[str], List[str]]:
+def get_brats_files(path: str = BRATSROOT, sequence: str = "t1") \
+        -> Tuple[List[str], List[str]]:
     """Get all BRATS files in a given sequence (t1, t2, or flair).
     Args:
         path (str): Path to BRATS root directory
@@ -47,6 +50,37 @@ def get_brats_files(path: str = BRATSROOT, sequence: str = "t1") -> Tuple[List[s
         f), 'anomaly_segmentation.nii.gz') for f in files]
     assert len(files) > 0, "No files found in BraTS"
     return files, seg_files
+
+
+def get_mood_train_files(path: str = MOODROOT, **kwargs) \
+        -> Tuple[List[str], List[str]]:
+    """Get MOOD training files.
+    Args:
+        path (str): Path to MOOD root directory
+    Returns:
+        files (List[str]): List of files
+    """
+    train_files = glob(os.path.join(path, 'brain/test_raw/*.nii.gz'))
+    train_files.extend(glob(os.path.join(path, 'brain/train/*.nii.gz')))
+    train_files = train_files[:round(len(train_files) * 0.8)]
+    assert len(train_files) > 0, "No files found in MOOD"
+    return train_files
+
+
+def get_mood_val_test_files(path: str = MOODROOT, **kwargs) \
+        -> Tuple[List[str], List[str]]:
+    """Get MOOD validation and test files.
+    Args:
+        sequence (str): One of "t1", or "t2"
+        path (str): Path to MOOD root directory
+    Returns:
+        files (List[str]): List of files
+    """
+    test_files = glob(os.path.join(path, 'brain/test_raw/*.nii.gz'))
+    test_files.extend(glob(os.path.join(path, 'brain/train/*.nii.gz')))
+    test_files = test_files[round(len(test_files) * 0.8):]
+    assert len(test_files) > 0, "No files found in MOOD"
+    return test_files, None
 
 
 def load_images(files: List[str], config) -> np.ndarray:
@@ -128,9 +162,9 @@ def get_files(ds_name: str, sequence: str):
     return get_files_fn(sequence=sequence)
 
 
-def val_test_split(files: Sequence, val_size: float, shuffle: bool = True) -> Tuple[List, List]:
+def val_test_split(files: Sequence, val_size: float, shuffle: bool = True) \
+        -> Tuple[List, List]:
     """Split a list of files into validation and test sets"""
-    # Shuffle before splitting
     if shuffle:
         np.random.shuffle(files)
 
@@ -154,22 +188,31 @@ def get_dataloaders(config):
     test_files, test_seg_files = get_files(
         config.test_dataset, config.sequence)
 
-    # Split into validation and test sets
-    val_size = int(len(test_files) * config.val_split)
-    val_files = test_files[:val_size]
-    test_files = test_files[val_size:]
-    val_seg_files = test_seg_files[:val_size]
-    test_seg_files = test_seg_files[val_size:]
+    print(f"Found {len(train_files)} training files")
+    print(f"Found {len(test_files)} test files")
 
-    print(f"Found {len(train_files)} training files files")
-    print(f"Found {len(val_files)} validation files files")
-    print(f"Found {len(test_files)} test files files")
-
-    train_imgs = np.concatenate(load_images(train_files, config))
-    val_imgs = np.concatenate(load_images(val_files, config))
-    val_segs = np.concatenate(load_segmentations(val_seg_files, config))
+    print("Loading images...")
+    if not config.train:
+        train_imgs = np.random.randn(1000, 1, 128, 128)
+    else:
+        np.concatenate(load_images(train_files, config))
     test_imgs = np.concatenate(load_images(test_files, config))
-    test_segs = np.concatenate(load_segmentations(test_seg_files, config))
+
+    if "mood" in config.test_dataset:
+        print("Creating artificial anomalies...")
+        assert config.anomaly_name is not None
+        test_imgs, test_segs = create_artificial_anomalies(
+            test_imgs, config.anomaly_name, radius_range=config.anomaly_size)
+    else:
+        print("Loading segmentations...")
+        test_segs = np.concatenate(load_segmentations(test_seg_files, config))
+
+    # Split into validation and test sets
+    val_size = int(len(test_imgs) * config.val_split)
+    val_imgs = test_imgs[:val_size]
+    test_imgs = test_imgs[val_size:]
+    val_segs = test_segs[:val_size]
+    test_segs = test_segs[val_size:]
 
     # Shuffle validation and test data
     val_perm = np.random.permutation(len(val_imgs))
@@ -198,39 +241,3 @@ def get_dataloaders(config):
     print(f"Len test_loader: {len(test_loader)}")
 
     return train_loader, val_loader, test_loader
-
-
-if __name__ == "__main__":
-    from argparse import Namespace
-    from fae.data.data_utils import show
-    config = Namespace()
-    config.slice_range = (55, 135)
-    config.image_size = 128
-    config.normalize = False
-    config.equalize_histogram = True
-    config.batch_size = 32
-
-    # Test finding files
-    camcan_files = get_camcan_files(sequence='t1')
-    print(len(camcan_files))
-
-    brats_files, brats_seg_files = get_brats_files(sequence='t1')
-    print(len(brats_files), len(brats_seg_files))
-
-    # Test training dataset
-    imgs = np.concatenate(load_images(camcan_files[:10], config))[:, None]
-    train_ds = TrainDataset(imgs[40:])
-    train_loader = DataLoader(train_ds, batch_size=config.batch_size)
-    x = next(iter(train_loader))
-    print(x.shape)
-    show(x[0, 0])
-
-    # Test test dataset
-    imgs = np.concatenate(load_images(brats_files[:10], config))[:, None]
-    segs = np.concatenate(load_segmentations(
-        brats_seg_files[:10], config))[:, None]
-    test_ds = TestDataset(imgs[40:], segs[40:])
-    test_loader = DataLoader(test_ds, batch_size=config.batch_size)
-    x, y = next(iter(test_loader))
-    print(x.shape, y.shape)
-    show([x[0, 0], y[0, 0]])
