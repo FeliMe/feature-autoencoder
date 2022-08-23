@@ -195,7 +195,7 @@ def get_dataloaders(config):
     if not config.train:
         train_imgs = np.random.randn(1000, 1, 128, 128)
     else:
-        np.concatenate(load_images(train_files, config))
+        train_imgs = np.concatenate(load_images(train_files, config))
     test_imgs = np.concatenate(load_images(test_files, config))
 
     if "mood" in config.test_dataset:
