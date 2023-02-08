@@ -1,5 +1,13 @@
 from argparse import ArgumentParser
 
+
+def boolean(s: str) -> bool:
+    """Convert string to boolean"""
+    if s not in {'False', 'True'}:
+        raise ValueError('Not a valid boolean string')
+    return s == 'True'
+
+
 base_parser = ArgumentParser(add_help=False)
 
 # General script settings
@@ -8,12 +16,13 @@ base_parser.add_argument('--debug', action='store_true', help='Debug mode')
 base_parser.add_argument('--no_train', action='store_false', dest='train',
                          help='Disable training')
 base_parser.add_argument('--resume_path', type=str,
-                         help='W&B path to checkpoint to resume training from')
+                         help='W&B path to checkpoint to resume training from'
+                         ' in the format <entity>/<project>/<run_id>/<model_name>')
 
 # Data settings
 base_parser.add_argument('--train_dataset', type=str,
-                         default='mood_train', help='Training dataset name')  # camcan
-base_parser.add_argument('--test_dataset', type=str, default='mood_val_test',
+                         default='camcan', help='Training dataset name')  # camcan
+base_parser.add_argument('--test_dataset', type=str, default='brats',
                          help='Test dataset name')  # brats
 base_parser.add_argument('--val_split', type=float,
                          default=0.1, help='Validation fraction')
@@ -25,14 +34,17 @@ base_parser.add_argument('--image_size', type=int,
                          default=128, help='Image size')
 base_parser.add_argument('--slice_range', type=int,
                          nargs='+', default=(55, 135), help='Slice range')
-base_parser.add_argument('--normalize', type=bool,
+base_parser.add_argument('--normalize', type=boolean,
                          default=False, help='Normalize images between 0 and 1')
-base_parser.add_argument('--equalize_histogram', type=bool,
+base_parser.add_argument('--equalize_histogram', type=boolean,
                          default=True, help='Equalize histogram')
 base_parser.add_argument('--anomaly_size', type=int,
                          nargs='+', default=(10, 20),
                          help='size of artificial anomalies')
-base_parser.add_argument('--anomaly_name', type=str)  # 'source_deformation', or 'sink_deformation'
+base_parser.add_argument('--anomaly_name', type=str, default='source_deformation',
+                         choices=['source_deformation',
+                                  'sink_deformation',
+                                  'intensity_anomaly'])
 
 # Logging settings
 base_parser.add_argument('--val_frequency', type=int,

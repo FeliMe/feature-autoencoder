@@ -60,9 +60,10 @@ def get_mood_train_files(path: str = MOODROOT, **kwargs) \
     Returns:
         files (List[str]): List of files
     """
-    train_files = glob(os.path.join(path, 'brain/test_raw/*.nii.gz'))
-    train_files.extend(glob(os.path.join(path, 'brain/train/*.nii.gz')))
-    train_files = train_files[:round(len(train_files) * 0.8)]
+    train_files = glob(os.path.join(path, 'brain/train/*.nii.gz'))
+    # train_files = glob(os.path.join(path, 'brain/test_raw/*.nii.gz'))
+    # train_files.extend(glob(os.path.join(path, 'brain/train/*.nii.gz')))
+    # train_files = train_files[:round(len(train_files) * 0.8)]
     assert len(train_files) > 0, "No files found in MOOD"
     return train_files
 
@@ -77,8 +78,9 @@ def get_mood_val_test_files(path: str = MOODROOT, **kwargs) \
         files (List[str]): List of files
     """
     test_files = glob(os.path.join(path, 'brain/test_raw/*.nii.gz'))
-    test_files.extend(glob(os.path.join(path, 'brain/train/*.nii.gz')))
-    test_files = test_files[round(len(test_files) * 0.8):]
+    # test_files = glob(os.path.join(path, 'brain/test_raw/*.nii.gz'))
+    # test_files.extend(glob(os.path.join(path, 'brain/train/*.nii.gz')))
+    # test_files = test_files[round(len(test_files) * 0.8):]
     assert len(test_files) > 0, "No files found in MOOD"
     return test_files, None
 

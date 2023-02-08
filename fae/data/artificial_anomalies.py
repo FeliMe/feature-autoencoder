@@ -24,6 +24,40 @@ def sample_position(img: np.ndarray) -> Tuple[int, int]:
     return position
 
 
+def intensity_anomaly(
+    img: np.ndarray,
+    position: Tuple[int, int],
+    radius: int,
+    intensity: Optional[float] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Pixels are assigned a (random) uniform intensity value.
+
+    Args:
+        img: Image to be augmented, shape [c, h, w]
+        position: Center pixel of the mask
+        radius: Radius
+    Returns:
+        img_deformed: img with (random) uniform intensity, shape [c, h, w]
+        label: target segmentation mask, shape [1, h, w]
+    """
+    # Create label mask
+    rr, cc = disk(position, radius)
+    rr = rr.clip(0, img.shape[-2] - 1)
+    cc = cc.clip(0, img.shape[-1] - 1)
+    label = np.zeros(img.shape, dtype=np.uint8)
+    label[..., rr, cc] = 1
+
+    # Sample intensity
+    if intensity is None:
+        intensity = np.random.uniform(0, 1)
+
+    # Create deformed image
+    img_deformed = img.copy()
+    img_deformed[..., rr, cc] = intensity
+
+    return img_deformed, label
+
+
 def source_deformation(img: np.ndarray, position: Tuple[int, int], radius: int) \
         -> Tuple[np.ndarray, np.ndarray]:
     """Pixels are shifted away from the center of the sphere.

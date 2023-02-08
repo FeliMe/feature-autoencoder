@@ -31,11 +31,14 @@ class BaseModel(nn.Module):
         weights = wandb.restore(name, run_path=run_path, root="/tmp", replace=True)
         if weights is None:
             raise RuntimeError(f"Model {name} not found under {run_path}")
-        self.load_state_dict(torch.load(weights.name))
+        self.load_state_dict(torch.load(weights.name)['model_state_dict'])
         os.remove(weights.name)
 
-    def save(self, name: str):
-        torch.save(self.state_dict(), os.path.join(wandb.run.dir, name))
+    def save(self, config, name: str):
+        torch.save({
+            'model_state_dict': self.state_dict(),
+            'config': config
+        }, os.path.join(wandb.run.dir, name))
 
 
 def vanilla_feature_encoder(in_channels: int, hidden_dims: List[int],
